@@ -4,7 +4,7 @@ import requests
 from telegram import Bot
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-PRIVATE_CHANNEL = os.getenv("PRIVATE_CHANNEL")
+PRIVATE_CHANNEL = "-1002608482349"  # رقم قناتك بشكل مباشر
 API_KEY = os.getenv("API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
