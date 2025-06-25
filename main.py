@@ -1,18 +1,17 @@
+import os
+import asyncio
 import requests
 from telegram import Bot
-import os
 
-# قراءة المتغيرات من بيئة Render
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PRIVATE_CHANNEL = os.getenv("PRIVATE_CHANNEL")
 API_KEY = os.getenv("API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
 
-# ✅ سطر تأكيد نجاح التشغيل
-bot.send_message(chat_id=PRIVATE_CHANNEL, text="✅ تم تشغيل البوت بنجاح!")
+async def send_startup_message():
+    await bot.send_message(chat_id=PRIVATE_CHANNEL, text="✅ تم تشغيل البوت بنجاح!")
 
-# دالة جلب الأسهم من Polygon API
 def fetch_filtered_stocks():
     url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={API_KEY}"
     response = requests.get(url)
@@ -43,7 +42,6 @@ def fetch_filtered_stocks():
 
     return filtered
 
-# دالة توليد التوصية
 def generate_recommendation(stock):
     entry = round(stock["price"], 2)
     targets = [round(entry * (1 + i / 100), 2) for i in [8, 15, 25, 40]]
@@ -62,12 +60,16 @@ def generate_recommendation(stock):
 
 #توصيات_الأسهم"""
 
-# التنفيذ الفعلي
-stocks = fetch_filtered_stocks()
-sent_tickers = []
+async def main():
+    await send_startup_message()
+    stocks = fetch_filtered_stocks()
+    sent_tickers = []
 
-for stock in stocks:
-    if stock["ticker"] not in sent_tickers:
-        msg = generate_recommendation(stock)
-        bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
-        sent_tickers.append(stock["ticker"])
+    for stock in stocks:
+        if stock["ticker"] not in sent_tickers:
+            msg = generate_recommendation(stock)
+            await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
+            sent_tickers.append(stock["ticker"])
+
+# تشغيل البرنامج
+asyncio.run(main())
