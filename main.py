@@ -8,7 +8,6 @@ POLYGON_API = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
 FINNHUB_API = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
 
 bot = Bot(token=BOT_TOKEN)
-
 sent_tickers = set()
 
 def fetch_gainers():
@@ -21,12 +20,31 @@ def fetch_gainers():
 
 def get_resistance(ticker):
     try:
+        url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution=3&count=100&token={FINNHUB_API}"
+        res = requests.get(url).json()
+        if res.get("s") != "ok":
+            return None
+        highs = res.get("h", [])
+        closes = res.get("c", [])
+        if not highs or not closes:
+            return None
+        last_close = closes[-1]
+        resistances = [h for h in highs if h > last_close and h - last_close < 0.3]
+        if resistances:
+            return round(min(resistances), 2)
+    except:
+        pass
+    return None
+
+def get_vwap(ticker):
+    try:
         url = f"https://finnhub.io/api/v1/indicator?symbol={ticker}&resolution=3&indicator=vwap&token={FINNHUB_API}"
         res = requests.get(url).json()
-        upper_band = res.get("vwap", [])[-1]
-        return round(upper_band, 2) if upper_band else None
-    except Exception:
-        return None
+        if "vwap" in res and res["vwap"]:
+            return round(res["vwap"][-1], 2)
+    except:
+        pass
+    return None
 
 def generate_message(ticker, entry):
     targets = [round(entry * (1 + i / 100), 2) for i in [0.08, 0.15, 0.25, 0.40]]
@@ -62,9 +80,12 @@ async def check_and_send():
             volume > avg_vol * 5 and
             ticker not in sent_tickers
         ):
-            entry = get_resistance(ticker)
-            if entry is None:
-                entry = round(price * 1.05, 2)
+            resistance = get_resistance(ticker)
+            if resistance:
+                entry = resistance
+            else:
+                vwap = get_vwap(ticker)
+                entry = round(vwap if vwap else price * 1.05, 2)
 
             msg = generate_message(ticker, entry)
             await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
