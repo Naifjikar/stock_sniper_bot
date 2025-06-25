@@ -1,11 +1,10 @@
-import os
 import asyncio
 import requests
 from telegram import Bot
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-PRIVATE_CHANNEL = "-1002608482349"  # رقم قناتك بشكل مباشر
-API_KEY = os.getenv("API_KEY")
+BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
+PRIVATE_CHANNEL = -1002608482349  # هذا هو رقم قناة Trend Mind
+API_KEY = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"  # API Key من polygon.io
 
 bot = Bot(token=BOT_TOKEN)
 
@@ -71,5 +70,4 @@ async def main():
             await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
             sent_tickers.append(stock["ticker"])
 
-# تشغيل البرنامج
 asyncio.run(main())
