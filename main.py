@@ -4,7 +4,7 @@ import asyncio
 from telegram import Bot
 
 BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
-PRIVATE_CHANNEL = "-1002131717526"
+PRIVATE_CHANNEL = "--1002608482349"
 API_KEY = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
 
 bot = Bot(token=BOT_TOKEN)
