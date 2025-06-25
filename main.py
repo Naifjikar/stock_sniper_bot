@@ -63,8 +63,8 @@ def generate_recommendation(stock):
 
 # تشغيل البوت
 if __name__ == "__main__":
-    # ✅ سطر الاختبار المباشر
-    send_msg(PRIVATE_CHANNEL, "✅ البوت شغال وتم التشغيل بنجاح!")
+    # ✅ هذا سطر اختبار فوري
+    send_msg(PRIVATE_CHANNEL, "✅ تم تشغيل البوت بنجاح!")
 
     stocks = fetch_filtered_stocks()
     print(f"Found {len(stocks)} stocks matching filters")
