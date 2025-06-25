@@ -1,24 +1,52 @@
 import requests
-import os
 import asyncio
-import time
 from telegram import Bot
-from datetime import datetime
 
 BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
 PRIVATE_CHANNEL = "-1002608482349"
-API_KEY = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
+POLYGON_API = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
+FINNHUB_API = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
 
 bot = Bot(token=BOT_TOKEN)
-sent_today = set()
 
-def fetch_filtered_stocks():
-    url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={API_KEY}"
-    response = requests.get(url)
-    data = response.json()
-    filtered = []
+sent_tickers = set()
 
-    for stock in data.get("tickers", []):
+def fetch_gainers():
+    url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={POLYGON_API}"
+    try:
+        res = requests.get(url).json()
+        return res.get("tickers", [])
+    except Exception:
+        return []
+
+def get_resistance(ticker):
+    try:
+        url = f"https://finnhub.io/api/v1/indicator?symbol={ticker}&resolution=3&indicator=vwap&token={FINNHUB_API}"
+        res = requests.get(url).json()
+        upper_band = res.get("vwap", [])[-1]
+        return round(upper_band, 2) if upper_band else None
+    except Exception:
+        return None
+
+def generate_message(ticker, entry):
+    targets = [round(entry * (1 + i / 100), 2) for i in [0.08, 0.15, 0.25, 0.40]]
+    stop = round(entry * 0.91, 2)
+    return f"""🚨 توصية اليوم 🚨
+
+📉 سهم: {ticker}
+📥 دخول: {entry}
+🎯 أهداف:
+- {targets[0]}
+- {targets[1]}
+- {targets[2]}
+- {targets[3]}
+⛔️ وقف: {stop}
+
+#توصيات_الأسهم"""
+
+async def check_and_send():
+    gainers = fetch_gainers()
+    for stock in gainers:
         ticker = stock["ticker"]
         price = stock["lastTrade"]["p"]
         volume = stock["day"]["v"]
@@ -31,48 +59,20 @@ def fetch_filtered_stocks():
             volume >= 5_000_000 and
             price > prev_close and
             ((price - open_price) / open_price) * 100 > 10 and
-            volume > avg_vol * 5
+            volume > avg_vol * 5 and
+            ticker not in sent_tickers
         ):
-            filtered.append({
-                "ticker": ticker,
-                "price": price,
-                "open": open_price,
-                "prev_close": prev_close
-            })
+            entry = get_resistance(ticker)
+            if entry is None:
+                entry = round(price * 1.05, 2)
 
-    return filtered
+            msg = generate_message(ticker, entry)
+            await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
+            sent_tickers.add(ticker)
 
-def generate_recommendation(stock):
-    entry = round(stock["price"], 2)
-    targets = [round(entry * (1 + i / 100), 2) for i in [8, 15, 25, 40]]
-    stop = round(entry * 0.91, 2)
-
-    return f"""🚨 توصية اليوم 🚨
-
-📉 سهم: {stock['ticker']}
-📥 دخول: {entry}
-🎯 أهداف:
-- {targets[0]}
-- {targets[1]}
-- {targets[2]}
-- {targets[3]}
-⛔️ وقف: {stop}
-
-#توصيات_الأسهم"""
-
-async def monitor():
+async def main_loop():
     while True:
-        now = datetime.now()
-        if now.hour == 0 and now.minute < 5:
-            sent_today.clear()
+        await check_and_send()
+        await asyncio.sleep(120)
 
-        stocks = fetch_filtered_stocks()
-        for stock in stocks:
-            if stock["ticker"] not in sent_today:
-                msg = generate_recommendation(stock)
-                await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
-                sent_today.add(stock["ticker"])
-
-        await asyncio.sleep(300)  # يشيك كل 5 دقايق
-
-asyncio.run(monitor())
+asyncio.run(main_loop())
