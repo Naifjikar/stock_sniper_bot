@@ -2,74 +2,44 @@ import os
 import requests
 from telegram import Bot
 
-# قراءة المتغيرات من البيئة
 TOKEN = os.getenv("BOT_TOKEN")
 PRIVATE_CHANNEL = os.getenv("PRIVATE_CHANNEL")
 API_KEY = os.getenv("API_KEY")
 
 bot = Bot(token=TOKEN)
 
-# دالة جلب الأسهم المطابقة للشروط
 def fetch_filtered_stocks():
     url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={API_KEY}"
-    response = requests.get(url)
-    data = response.json()
-    filtered = []
+    data = requests.get(url).json()
+    results = []
+    for s in data.get("tickers", []):
+        price = s["lastTrade"]["p"]
+        if (1 <= price <= 5
+            and s["day"]["v"] >= 5_000_000
+            and price > s["prevDay"]["c"]
+            and ((price - s["day"]["o"]) / s["day"]["o"]) * 100 > 10
+            and s["day"]["v"] > s["day"]["av"] * 5):
+            results.append(s)
+    return results
 
-    for stock in data.get("tickers", []):
-        ticker = stock["ticker"]
-        price = stock["lastTrade"]["p"]
-        volume = stock["day"]["v"]
-        open_price = stock["day"]["o"]
-        prev_close = stock["prevDay"]["c"]
-        avg_vol = stock["day"]["av"]
+def generate_recs(stocks):
+    msgs = []
+    sent = set()
+    for s in stocks:
+        t = s["ticker"]
+        if t in sent: continue
+        price = round(s["lastTrade"]["p"], 2)
+        targets = [round(price*(1+i/100),2) for i in [8,15,25,40]]
+        stop = round(price*0.91,2)
+        msgs.append(f"🚨 توصية: {t}\nدخول: {price}\nأهداف: {targets}\nوقف: {stop}")
+        sent.add(t)
+    return msgs
 
-        if (
-            1 <= price <= 5 and
-            volume >= 5_000_000 and
-            price > prev_close and
-            ((price - open_price) / open_price) * 100 > 10 and
-            volume > avg_vol * 5
-        ):
-            filtered.append({
-                "ticker": ticker,
-                "price": price,
-                "open": open_price,
-                "prev_close": prev_close
-            })
-
-    return filtered
-
-# توليد توصية برسالة منظمة
-def generate_recommendation(stock):
-    entry = round(stock["price"], 2)
-    targets = [round(entry * (1 + i / 100), 2) for i in [8, 15, 25, 40]]
-    stop = round(entry * 0.91, 2)
-
-    return f"""🚨 توصية اليوم 🚨
-
-📉 سهم: {stock['ticker']}
-📥 دخول: {entry}
-🎯 أهداف:
-- {targets[0]}
-- {targets[1]}
-- {targets[2]}
-- {targets[3]}
-⛔️ وقف: {stop}
-
-#توصيات_الأسهم"""
-
-# إرسال التوصيات
-stocks = fetch_filtered_stocks()
-print(f"Found {len(stocks)} stocks matching filters")
-
-if not stocks:
-    bot.send_message(chat_id=PRIVATE_CHANNEL, text="📭 لا توجد توصيات مطابقة اليوم.")
-
-sent_tickers = []
-
-for stock in stocks:
-    if stock["ticker"] not in sent_tickers:
-        msg = generate_recommendation(stock)
-        bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
-        sent_tickers.append(stock["ticker"])
+if __name__ == "__main__":
+    st = fetch_filtered_stocks()
+    print("Found", len(st), "stocks")
+    if not st:
+        bot.send_message(chat_id=PRIVATE_CHANNEL, text="📭 لا توجد توصيات اليوم.")
+    else:
+        for m in generate_recs(st):
+            bot.send_message(chat_id=PRIVATE_CHANNEL, text=m)
