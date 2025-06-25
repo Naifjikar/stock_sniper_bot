@@ -1,16 +1,16 @@
 import requests
 import os
 import asyncio
+import time
 from telegram import Bot
+from datetime import datetime
 
 BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
 PRIVATE_CHANNEL = "-1002608482349"
 API_KEY = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
 
 bot = Bot(token=BOT_TOKEN)
-
-async def send_startup_message():
-    await bot.send_message(chat_id=PRIVATE_CHANNEL, text="✅ تم تشغيل البوت بنجاح!")
+sent_today = set()
 
 def fetch_filtered_stocks():
     url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={API_KEY}"
@@ -60,16 +60,19 @@ def generate_recommendation(stock):
 
 #توصيات_الأسهم"""
 
-async def main():
-    await send_startup_message()
-    stocks = fetch_filtered_stocks()
-    sent_tickers = []
+async def monitor():
+    while True:
+        now = datetime.now()
+        if now.hour == 0 and now.minute < 5:
+            sent_today.clear()
 
-    for stock in stocks:
-        if stock["ticker"] not in sent_tickers:
-            msg = generate_recommendation(stock)
-            await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
-            sent_tickers.append(stock["ticker"])
+        stocks = fetch_filtered_stocks()
+        for stock in stocks:
+            if stock["ticker"] not in sent_today:
+                msg = generate_recommendation(stock)
+                await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
+                sent_today.add(stock["ticker"])
 
-# تشغيل البرنامج
-asyncio.run(main())
+        await asyncio.sleep(300)  # يشيك كل 5 دقايق
+
+asyncio.run(monitor())
