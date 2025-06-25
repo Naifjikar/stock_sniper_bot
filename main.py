@@ -1,13 +1,13 @@
+import os
 import requests
 from telegram import Bot
 
-# إعدادات التوكن والقنوات
-TOKEN = "8085180830:AAHy2Jxt_PfMuxgetbsjkk6I41klu8gMV50"
-PRIVATE_CHANNEL = "-1002131717526"
-bot = Bot(token=TOKEN)
+# قراءة المتغيرات من البيئة
+TOKEN = os.getenv("BOT_TOKEN")
+PRIVATE_CHANNEL = os.getenv("PRIVATE_CHANNEL")
+API_KEY = os.getenv("API_KEY")
 
-# مفتاح API من Polygon
-API_KEY = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
+bot = Bot(token=TOKEN)
 
 # دالة جلب الأسهم المطابقة للشروط
 def fetch_filtered_stocks():
