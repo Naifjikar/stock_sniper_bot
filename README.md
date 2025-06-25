@@ -1,1 +1,0 @@
-# stock_sniper_bot
