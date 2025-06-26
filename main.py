@@ -1,6 +1,8 @@
 import requests
 import asyncio
 from telegram import Bot
+from datetime import datetime, timedelta
+import pytz
 
 BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
 PRIVATE_CHANNEL = "-1002608482349"
@@ -62,8 +64,20 @@ def generate_message(ticker, entry):
 
 #توصيات_الأسهم"""
 
+def within_trading_hours():
+    now = datetime.now(pytz.timezone("Asia/Riyadh"))
+    start = now.replace(hour=11, minute=0, second=0, microsecond=0)
+    end = now.replace(hour=22, minute=30, second=0, microsecond=0)
+    return start <= now <= end
+
 async def check_and_send():
+    if not within_trading_hours():
+        print("⏳ خارج وقت التداول. البوت ينتظر...")
+        return
+
     gainers = fetch_gainers()
+    print(f"📊 عدد الأسهم من API: {len(gainers)}")
+
     for stock in gainers:
         ticker = stock["ticker"]
         price = stock["lastTrade"]["p"]
@@ -72,8 +86,10 @@ async def check_and_send():
         prev_close = stock["prevDay"]["c"]
         avg_vol = stock["day"]["av"]
 
+        print(f"🔎 فحص السهم: {ticker} | السعر الحالي: {price}")
+
         if (
-            1 <= price <= 5 and
+            0.1 <= price <= 1000 and
             volume >= 5_000_000 and
             price > prev_close and
             ((price - open_price) / open_price) * 100 > 10 and
@@ -89,6 +105,7 @@ async def check_and_send():
 
             msg = generate_message(ticker, entry)
             await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
+            print(f"✅ تم إرسال توصية لـ {ticker} عند {entry}")
             sent_tickers.add(ticker)
 
 async def main_loop():
