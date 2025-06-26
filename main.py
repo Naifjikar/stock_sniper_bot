@@ -1,7 +1,7 @@
 import requests
 import asyncio
 from telegram import Bot
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
@@ -16,14 +16,17 @@ def fetch_gainers():
     url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={POLYGON_API}"
     try:
         res = requests.get(url).json()
+        print("🔗 رد API Polygon:", res)  # <== تشخيص
         return res.get("tickers", [])
-    except Exception:
+    except Exception as e:
+        print("❌ خطأ في جلب الأسهم:", e)
         return []
 
 def get_resistance(ticker):
     try:
         url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution=3&count=100&token={FINNHUB_API}"
         res = requests.get(url).json()
+        print(f"📈 رد الشموع من Finnhub لـ {ticker}:", res)  # <== تشخيص
         if res.get("s") != "ok":
             return None
         highs = res.get("h", [])
@@ -34,18 +37,19 @@ def get_resistance(ticker):
         resistances = [h for h in highs if h > last_close and h - last_close < 0.3]
         if resistances:
             return round(min(resistances), 2)
-    except:
-        pass
+    except Exception as e:
+        print(f"❌ خطأ في get_resistance لـ {ticker}:", e)
     return None
 
 def get_vwap(ticker):
     try:
         url = f"https://finnhub.io/api/v1/indicator?symbol={ticker}&resolution=3&indicator=vwap&token={FINNHUB_API}"
         res = requests.get(url).json()
+        print(f"📉 رد VWAP من Finnhub لـ {ticker}:", res)  # <== تشخيص
         if "vwap" in res and res["vwap"]:
             return round(res["vwap"][-1], 2)
-    except:
-        pass
+    except Exception as e:
+        print(f"❌ خطأ في get_vwap لـ {ticker}:", e)
     return None
 
 def generate_message(ticker, entry):
@@ -71,6 +75,8 @@ def within_trading_hours():
     return start <= now <= end
 
 async def check_and_send():
+    print("📡 البوت شغال ويبحث عن توصيات...")  # <== تأكيد الشغل
+
     if not within_trading_hours():
         print("⏳ خارج وقت التداول. البوت ينتظر...")
         return
