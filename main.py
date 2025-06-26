@@ -4,6 +4,22 @@ from telegram import Bot
 from datetime import datetime
 import pytz
 
+# ✅ طباعة تأكيد بداية التنفيذ
+print("🚀 بدأ تنفيذ البوت")
+
+# ✅ اختبار مباشر لربط API
+try:
+    polygon_test = requests.get("https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey=ht3apHm7nJA2VhvBynMHEcpRI11VSRbq").json()
+    print("✅ Polygon يعمل، عدد الأسهم:", len(polygon_test.get("tickers", [])))
+except Exception as e:
+    print("❌ Polygon لا يعمل:", e)
+
+try:
+    finnhub_test = requests.get("https://finnhub.io/api/v1/quote?symbol=AAPL&token=d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0").json()
+    print("✅ Finnhub يعمل، سعر AAPL الحالي:", finnhub_test.get("c"))
+except Exception as e:
+    print("❌ Finnhub لا يعمل:", e)
+
 BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
 PRIVATE_CHANNEL = "-1002608482349"
 POLYGON_API = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
@@ -16,7 +32,7 @@ def fetch_gainers():
     url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={POLYGON_API}"
     try:
         res = requests.get(url).json()
-        print("🔗 رد API Polygon:", res)  # <== تشخيص
+        print("🔗 رد API Polygon:", res)
         return res.get("tickers", [])
     except Exception as e:
         print("❌ خطأ في جلب الأسهم:", e)
@@ -26,7 +42,7 @@ def get_resistance(ticker):
     try:
         url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution=3&count=100&token={FINNHUB_API}"
         res = requests.get(url).json()
-        print(f"📈 رد الشموع من Finnhub لـ {ticker}:", res)  # <== تشخيص
+        print(f"📈 رد الشموع من Finnhub لـ {ticker}:", res)
         if res.get("s") != "ok":
             return None
         highs = res.get("h", [])
@@ -45,7 +61,7 @@ def get_vwap(ticker):
     try:
         url = f"https://finnhub.io/api/v1/indicator?symbol={ticker}&resolution=3&indicator=vwap&token={FINNHUB_API}"
         res = requests.get(url).json()
-        print(f"📉 رد VWAP من Finnhub لـ {ticker}:", res)  # <== تشخيص
+        print(f"📉 رد VWAP من Finnhub لـ {ticker}:", res)
         if "vwap" in res and res["vwap"]:
             return round(res["vwap"][-1], 2)
     except Exception as e:
@@ -75,7 +91,7 @@ def within_trading_hours():
     return start <= now <= end
 
 async def check_and_send():
-    print("📡 البوت شغال ويبحث عن توصيات...")  # <== تأكيد الشغل
+    print("📡 البوت شغال ويبحث عن توصيات...")
 
     if not within_trading_hours():
         print("⏳ خارج وقت التداول. البوت ينتظر...")
@@ -115,6 +131,7 @@ async def check_and_send():
             sent_tickers.add(ticker)
 
 async def main_loop():
+    print("♻️ دخل في الحلقة الرئيسية")
     while True:
         await check_and_send()
         await asyncio.sleep(120)
