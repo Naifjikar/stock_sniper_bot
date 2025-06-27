@@ -136,7 +136,8 @@ async def check_and_send():
 async def main_loop():
     while True:
         await check_and_send()
-        await asyncio.sleep(60)  # كل دقيقة
+        await asyncio.sleep(60)
 
-# للتشغيل اليدوي
-# asyncio.run(main_loop())
+# ✅ التشغيل التلقائي
+if __name__ == "__main__":
+    asyncio.run(main_loop())
