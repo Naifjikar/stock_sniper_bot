@@ -4,45 +4,51 @@ from telegram import Bot
 from datetime import datetime
 import pytz
 
-# ✅ طباعة تأكيد بداية التنفيذ
-print("🚀 بدأ تنفيذ البوت")
-
-# ✅ اختبار مباشر لربط API
-try:
-    polygon_test = requests.get("https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey=ht3apHm7nJA2VhvBynMHEcpRI11VSRbq").json()
-    print("✅ Polygon يعمل، عدد الأسهم:", len(polygon_test.get("tickers", [])))
-except Exception as e:
-    print("❌ Polygon لا يعمل:", e)
-
-try:
-    finnhub_test = requests.get("https://finnhub.io/api/v1/quote?symbol=AAPL&token=d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0").json()
-    print("✅ Finnhub يعمل، سعر AAPL الحالي:", finnhub_test.get("c"))
-except Exception as e:
-    print("❌ Finnhub لا يعمل:", e)
-
 BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
 PRIVATE_CHANNEL = "-1002608482349"
-POLYGON_API = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
 FINNHUB_API = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
 
 bot = Bot(token=BOT_TOKEN)
 sent_tickers = set()
 
 def fetch_gainers():
-    url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={POLYGON_API}"
+    url = "https://quotes-gw.webullfintech.com/api/information/securities/top?regionId=6&topSecType=1"
+    headers = {
+        "accept": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
     try:
-        res = requests.get(url).json()
-        print("🔗 رد API Polygon:", res)
-        return res.get("tickers", [])
+        res = requests.get(url, headers=headers).json()
+        results = []
+        for item in res.get("data", []):
+            try:
+                ticker = item["ticker"]
+                price = float(item["lastDone"])
+                volume = float(item["volume"])
+                change = float(item["chgRate"])
+                open_price = float(item["open"])
+                prev_close = float(item["close"])
+                avg_vol = float(item.get("avgVol10D", volume / 2))
+                results.append({
+                    "ticker": ticker,
+                    "price": price,
+                    "volume": volume,
+                    "change": change,
+                    "open_price": open_price,
+                    "prev_close": prev_close,
+                    "avg_vol": avg_vol
+                })
+            except:
+                continue
+        return results
     except Exception as e:
-        print("❌ خطأ في جلب الأسهم:", e)
+        print("❌ Webull Gainers error:", e)
         return []
 
 def get_resistance(ticker):
     try:
         url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution=3&count=100&token={FINNHUB_API}"
         res = requests.get(url).json()
-        print(f"📈 رد الشموع من Finnhub لـ {ticker}:", res)
         if res.get("s") != "ok":
             return None
         highs = res.get("h", [])
@@ -54,18 +60,17 @@ def get_resistance(ticker):
         if resistances:
             return round(min(resistances), 2)
     except Exception as e:
-        print(f"❌ خطأ في get_resistance لـ {ticker}:", e)
+        print(f"❌ Error get_resistance for {ticker}:", e)
     return None
 
 def get_vwap(ticker):
     try:
         url = f"https://finnhub.io/api/v1/indicator?symbol={ticker}&resolution=3&indicator=vwap&token={FINNHUB_API}"
         res = requests.get(url).json()
-        print(f"📉 رد VWAP من Finnhub لـ {ticker}:", res)
         if "vwap" in res and res["vwap"]:
             return round(res["vwap"][-1], 2)
     except Exception as e:
-        print(f"❌ خطأ في get_vwap لـ {ticker}:", e)
+        print(f"❌ Error get_vwap for {ticker}:", e)
     return None
 
 def generate_message(ticker, entry):
@@ -91,24 +96,22 @@ def within_trading_hours():
     return start <= now <= end
 
 async def check_and_send():
-    print("📡 البوت شغال ويبحث عن توصيات...")
+    print("📡 بدأ الفحص")
 
     if not within_trading_hours():
-        print("⏳ خارج وقت التداول. البوت ينتظر...")
+        print("⏳ السوق مغلق حالياً")
         return
 
     gainers = fetch_gainers()
-    print(f"📊 عدد الأسهم من API: {len(gainers)}")
+    print(f"📊 تم جلب {len(gainers)} سهم من Webull")
 
     for stock in gainers:
         ticker = stock["ticker"]
-        price = stock["lastTrade"]["p"]
-        volume = stock["day"]["v"]
-        open_price = stock["day"]["o"]
-        prev_close = stock["prevDay"]["c"]
-        avg_vol = stock["day"]["av"]
-
-        print(f"🔎 فحص السهم: {ticker} | السعر الحالي: {price}")
+        price = stock["price"]
+        volume = stock["volume"]
+        open_price = stock["open_price"]
+        prev_close = stock["prev_close"]
+        avg_vol = stock["avg_vol"]
 
         if (
             0.1 <= price <= 1000 and
@@ -127,13 +130,13 @@ async def check_and_send():
 
             msg = generate_message(ticker, entry)
             await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
-            print(f"✅ تم إرسال توصية لـ {ticker} عند {entry}")
+            print(f"✅ أُرسلت توصية {ticker} عند {entry}")
             sent_tickers.add(ticker)
 
 async def main_loop():
-    print("♻️ دخل في الحلقة الرئيسية")
     while True:
         await check_and_send()
-        await asyncio.sleep(120)
+        await asyncio.sleep(60)  # كل دقيقة
 
-asyncio.run(main_loop())
+# للتشغيل اليدوي
+# asyncio.run(main_loop())
