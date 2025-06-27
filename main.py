@@ -13,10 +13,7 @@ sent_tickers = set()
 
 def fetch_gainers():
     url = "https://quotes-gw.webullfintech.com/api/information/securities/top?regionId=6&topSecType=1"
-    headers = {
-        "accept": "application/json",
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"accept": "application/json", "User-Agent": "Mozilla/5.0"}
     try:
         res = requests.get(url, headers=headers).json()
         results = []
@@ -102,8 +99,11 @@ async def check_and_send():
         print("⏳ السوق مغلق حالياً")
         return
 
+    await bot.send_message(chat_id=PRIVATE_CHANNEL, text="📡 جاري فحص الأسهم...")
     gainers = fetch_gainers()
     print(f"📊 تم جلب {len(gainers)} سهم من Webull")
+
+    recommendations_sent = False
 
     for stock in gainers:
         ticker = stock["ticker"]
@@ -122,22 +122,23 @@ async def check_and_send():
             ticker not in sent_tickers
         ):
             resistance = get_resistance(ticker)
-            if resistance:
-                entry = resistance
-            else:
-                vwap = get_vwap(ticker)
-                entry = round(vwap if vwap else price * 1.05, 2)
+            entry = resistance if resistance else get_vwap(ticker)
+            if not entry:
+                entry = round(price * 1.05, 2)
 
             msg = generate_message(ticker, entry)
             await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
             print(f"✅ أُرسلت توصية {ticker} عند {entry}")
             sent_tickers.add(ticker)
+            recommendations_sent = True
+
+    if not recommendations_sent:
+        print("ℹ️ لا توجد توصيات مناسبة حالياً")
 
 async def main_loop():
     while True:
         await check_and_send()
         await asyncio.sleep(60)
 
-# ✅ التشغيل التلقائي
 if __name__ == "__main__":
     asyncio.run(main_loop())
