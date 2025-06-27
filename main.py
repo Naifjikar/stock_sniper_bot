@@ -99,11 +99,10 @@ async def check_and_send():
         print("⏳ السوق مغلق حالياً")
         return
 
-    await bot.send_message(chat_id=PRIVATE_CHANNEL, text="📡 جاري فحص الأسهم...")
     gainers = fetch_gainers()
     print(f"📊 تم جلب {len(gainers)} سهم من Webull")
 
-    recommendations_sent = False
+    recommendations = []
 
     for stock in gainers:
         ticker = stock["ticker"]
@@ -127,12 +126,15 @@ async def check_and_send():
                 entry = round(price * 1.05, 2)
 
             msg = generate_message(ticker, entry)
+            recommendations.append((ticker, msg, entry))
+
+    if recommendations:
+        await bot.send_message(chat_id=PRIVATE_CHANNEL, text="📡 جاري فحص الأسهم...")
+        for ticker, msg, entry in recommendations:
             await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
             print(f"✅ أُرسلت توصية {ticker} عند {entry}")
             sent_tickers.add(ticker)
-            recommendations_sent = True
-
-    if not recommendations_sent:
+    else:
         print("ℹ️ لا توجد توصيات مناسبة حالياً")
 
 async def main_loop():
