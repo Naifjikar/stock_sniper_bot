@@ -104,8 +104,6 @@ def within_trading_hours():
     return start <= now <= end
 
 async def check_and_send():
-    now = datetime.now().strftime("%H:%M:%S")
-    print(f"\n🟢 شغال الآن: {now}")
     print("📡 بدأ الفحص")
 
     if not within_trading_hours():
@@ -123,42 +121,27 @@ async def check_and_send():
         open_price = stock["open_price"]
         prev_close = stock["prev_close"]
 
-        # شروط الفلترة
-        if not (1 <= price <= 10):
-            print(f"❌ {ticker} خارج نطاق السعر")
-            continue
-        if volume < 700_000:
-            print(f"❌ {ticker} حجم التداول ضعيف: {volume}")
-            continue
-        if price <= prev_close:
-            print(f"❌ {ticker} السعر أقل من إغلاق أمس")
-            continue
-        if ((price - open_price) / open_price) * 100 < 10:
-            print(f"❌ {ticker} لم يحقق 10% من الافتتاح")
-            continue
-        if change < 10:
-            print(f"❌ {ticker} لم يحقق 10% تغير خلال 10 دقائق")
-            continue
-        if ticker in sent_tickers:
-            print(f"❌ {ticker} تم إرساله سابقاً")
-            continue
+        if (
+            1 <= price <= 10 and
+            volume >= 700_000 and
+            price > prev_close and
+            ((price - open_price) / open_price) * 100 >= 10 and
+            change >= 10 and
+            ticker not in sent_tickers
+        ):
+            prev_high = get_prev_high(ticker)
+            if prev_high and price <= prev_high:
+                continue
 
-        # شرط هايات أمس
-        prev_high = get_prev_high(ticker)
-        if prev_high and price <= prev_high:
-            print(f"❌ {ticker} لم يخترق هايات أمس: {prev_high}")
-            continue
+            resistance = get_resistance(ticker)
+            entry = resistance if resistance else get_vwap(ticker)
+            if not entry:
+                entry = round(price * 1.05, 2)
 
-        # تحديد نقطة الدخول
-        resistance = get_resistance(ticker)
-        entry = resistance if resistance else get_vwap(ticker)
-        if not entry:
-            entry = round(price * 1.05, 2)
-
-        msg = generate_message(ticker, entry)
-        await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
-        print(f"✅ تم إرسال: {ticker} عند {entry}")
-        sent_tickers.add(ticker)
+            msg = generate_message(ticker, entry)
+            await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
+            print(f"✅ تم إرسال: {ticker} عند {entry}")
+            sent_tickers.add(ticker)
 
 async def main_loop():
     while True:
@@ -166,4 +149,5 @@ async def main_loop():
         await asyncio.sleep(20)
 
 if __name__ == "__main__":
+    print("🚀 بدأ التشغيل الكامل للبوت...")
     asyncio.run(main_loop())
