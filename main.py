@@ -17,7 +17,13 @@ timezone = pytz.timezone('Asia/Riyadh')
 
 def get_filtered_stocks():
     market_url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
-    symbols = requests.get(market_url).json()
+    try:
+        res = requests.get(market_url)
+        symbols = res.json()
+    except Exception as e:
+        print("❌ فشل في جلب الرموز:", e)
+        return []
+
     filtered = []
 
     for sym in symbols:
@@ -26,9 +32,8 @@ def get_filtered_stocks():
             continue
 
         quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
-        data = requests.get(quote_url).json()
-
         try:
+            data = requests.get(quote_url).json()
             c = data.get("c", 0)
             pc = data.get("pc", 0)
             o = data.get("o", 0)
@@ -49,7 +54,6 @@ def get_filtered_stocks():
                 filtered.append(symbol)
                 if len(filtered) >= 3:
                     break
-
         except:
             continue
 
@@ -58,11 +62,12 @@ def get_filtered_stocks():
 
 def get_entry_point(symbol):
     url = f"https://finnhub.io/api/v1/indicator?symbol={symbol}&resolution=3&indicator=vwap&token={FINNHUB_KEY}"
-    res = requests.get(url).json()
     try:
+        res = requests.get(url).json()
         last_vwap = res["vwap"][-1]
         return round(last_vwap, 2)
     except:
+        print(f"❌ فشل VWAP لـ {symbol}")
         return None
 
 def send_recommendation(symbol, entry):
@@ -88,8 +93,8 @@ def send_recommendation(symbol, entry):
     print(f"✅ تم إرسال التوصية: {symbol} | دخول: {entry}")
 
 def run():
-    current_time = datetime.datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')
-    print(f"📡 بدأ الفحص في: {current_time}")
+    now = datetime.datetime.now(timezone)
+    print(f"📡 بدأ الفحص في: {now.strftime('%d-%m-%Y %H:%M:%S')}")
     symbols = get_filtered_stocks()
 
     for sym in symbols:
