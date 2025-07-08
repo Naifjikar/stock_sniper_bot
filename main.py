@@ -17,40 +17,48 @@ timezone = pytz.timezone('Asia/Riyadh')
 
 def get_filtered_stocks():
     market_url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
-    response = requests.get(market_url).json()
+    try:
+        symbols = requests.get(market_url, timeout=10).json()
+    except:
+        print("❌ فشل في جلب رموز الأسهم من السوق")
+        return []
+
     filtered = []
 
-    for item in response:
-        try:
-            symbol = item["symbol"]
-            if "." in symbol:
-                continue
+    for sym in symbols:
+        symbol = sym.get("symbol")
+        if not symbol or "." in symbol:
+            continue
 
+        try:
             quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
-            data = requests.get(quote_url).json()
+            data = requests.get(quote_url, timeout=10).json()
 
             c = data.get("c", 0)
             pc = data.get("pc", 0)
             o = data.get("o", 0)
             vol = data.get("v", 0)
 
-            if not all([c, pc, o]) or c < 0.1 or c > 1000:
+            if not all([c, pc, o]):
                 continue
 
             change_from_open = (c - o) / o * 100
             volume_ratio = vol / 1_000_000
 
             if (
+                1 <= c <= 5 and
                 c > pc and
-                change_from_open >= 3 and
-                volume_ratio >= 1
+                change_from_open >= 10 and
+                volume_ratio >= 5
             ):
-                print(f"✅ {symbol} - السعر {c:.2f} - التغيير {change_from_open:.2f}% - الحجم {vol}")
+                print(f"✅ {symbol} | سعر: {c} | تغير: {round(change_from_open, 2)}% | حجم: {round(volume_ratio, 1)}M")
                 filtered.append(symbol)
-                if len(filtered) >= 3:
-                    break
+
+            if len(filtered) >= 3:
+                break
+
         except Exception as e:
-            print(f"خطأ في {symbol}: {e}")
+            print(f"⚠️ خطأ في السهم {symbol}: {e}")
             continue
 
     print(f"📈 عدد الأسهم المطابقة: {len(filtered)}")
@@ -58,11 +66,12 @@ def get_filtered_stocks():
 
 def get_entry_point(symbol):
     url = f"https://finnhub.io/api/v1/indicator?symbol={symbol}&resolution=3&indicator=vwap&token={FINNHUB_KEY}"
-    res = requests.get(url).json()
     try:
+        res = requests.get(url, timeout=10).json()
         last_vwap = res["vwap"][-1]
         return round(last_vwap, 2)
     except:
+        print(f"❌ لا يوجد VWAP لـ {symbol}")
         return None
 
 def send_recommendation(symbol, entry):
@@ -84,11 +93,15 @@ def send_recommendation(symbol, entry):
 - {targets[3]}
 وقف: {stop}
 """
-    bot.send_message(chat_id=CHANNEL_ID, text=msg)
-    print(f"✅ تم إرسال التوصية: {symbol} | دخول: {entry}")
+    try:
+        bot.send_message(chat_id=CHANNEL_ID, text=msg)
+        print(f"📤 تم إرسال التوصية: {symbol} | دخول: {entry}")
+    except Exception as e:
+        print(f"❌ فشل إرسال التوصية لـ {symbol}: {e}")
 
 def run():
-    print("📡 بدأ الفحص في:", datetime.datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S'))
+    now = datetime.datetime.now(timezone)
+    print("📡 بدأ الفحص في:", now.strftime('%Y-%m-%d %H:%M:%S'))
     symbols = get_filtered_stocks()
 
     for sym in symbols:
@@ -96,8 +109,8 @@ def run():
         if entry:
             send_recommendation(sym, entry)
         else:
-            print(f"❌ لا يوجد VWAP لـ {sym}")
+            print(f"🚫 تجاهل {sym} بسبب عدم وجود نقطة دخول")
 
 while True:
     run()
-    time.sleep(600)
+    time.sleep(600)  # كل 10 دقائق
