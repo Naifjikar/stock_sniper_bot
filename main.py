@@ -1,5 +1,6 @@
-import requests
 import asyncio
+import threading
+import requests
 from telegram import Bot
 from datetime import datetime
 import pytz
@@ -105,7 +106,6 @@ def within_trading_hours():
 
 async def check_and_send():
     print("📡 بدأ الفحص")
-
     if not within_trading_hours():
         print("⏳ السوق مغلق حالياً")
         return
@@ -149,18 +149,11 @@ async def main_loop():
         await check_and_send()
         await asyncio.sleep(20)
 
-# ✅ حل متوافق 100٪ مع سيرفر Render
-def start_bot():
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    try:
-        loop.run_until_complete(main_loop())
-    except Exception as e:
-        print("❌ Error running loop:", e)
+def run_loop():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main_loop())
 
 if __name__ == "__main__":
-    start_bot()
+    t = threading.Thread(target=run_loop)
+    t.start()
