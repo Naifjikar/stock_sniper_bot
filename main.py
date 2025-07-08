@@ -33,8 +33,7 @@ def fetch_gainers():
                     "open_price": open_price,
                     "prev_close": prev_close,
                 })
-            except Exception as e:
-                print("⚠️ Error parsing stock item:", e)
+            except:
                 continue
         return results
     except Exception as e:
@@ -122,8 +121,6 @@ async def check_and_send():
         open_price = stock["open_price"]
         prev_close = stock["prev_close"]
 
-        print(f"🔍 فحص {ticker} - السعر: {price}, الحجم: {volume}, التغير: {change}%")
-
         if (
             1 <= price <= 10 and
             volume >= 700_000 and
@@ -132,13 +129,8 @@ async def check_and_send():
             change >= 10 and
             ticker not in sent_tickers
         ):
-            print(f"✅ {ticker} اجتاز الفلترة الأولى")
-
             prev_high = get_prev_high(ticker)
-            if prev_high:
-                print(f"📈 هاي أمس: {prev_high}")
             if prev_high and price <= prev_high:
-                print(f"⛔️ {ticker} لم يتجاوز هاي أمس")
                 continue
 
             resistance = get_resistance(ticker)
@@ -146,21 +138,16 @@ async def check_and_send():
             if not entry:
                 entry = round(price * 1.05, 2)
 
-            print(f"📥 نقطة الدخول: {entry}")
             msg = generate_message(ticker, entry)
             await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
-            print(f"📨 تم الإرسال: {ticker} ✅")
+            print(f"✅ تم إرسال: {ticker} عند {entry}")
             sent_tickers.add(ticker)
-        else:
-            print(f"❌ {ticker} لم يطابق الشروط")
 
 async def main_loop():
     print("🚀 بدأ التشغيل الكامل للبوت...")
     while True:
-        print("📡 بدأ الفحص")
         await check_and_send()
         await asyncio.sleep(20)
-        
+
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main_loop())
