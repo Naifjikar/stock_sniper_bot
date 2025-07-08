@@ -161,7 +161,5 @@ async def main_loop():
         await asyncio.sleep(20)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("🛑 تم إيقاف البوت يدويًا")
+    import asyncio
+    asyncio.run(main_loop())
