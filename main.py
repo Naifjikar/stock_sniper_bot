@@ -106,9 +106,13 @@ def within_trading_hours():
 
 async def check_and_send():
     print("📡 بدأ الفحص")
-    if not within_trading_hours():
-        print("⏳ السوق مغلق حالياً")
-        return
+
+    # احذف شرط السوق مؤقتًا للتجربة
+    # if not within_trading_hours():
+    #     print("⏳ السوق مغلق حالياً")
+    #     return
+
+    print("✅ شغال تمام... جاري الفحص")
 
     gainers = fetch_gainers()
     print(f"📊 تم جلب {len(gainers)} سهم من Webull")
