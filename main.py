@@ -88,7 +88,8 @@ def send_recommendation(symbol, entry):
     print(f"✅ تم إرسال التوصية: {symbol} | دخول: {entry}")
 
 def run():
-    print("📡 بدأ الفحص")
+    current_time = datetime.datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')
+    print(f"📡 بدأ الفحص في: {current_time}")
     symbols = get_filtered_stocks()
 
     for sym in symbols:
