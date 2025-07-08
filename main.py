@@ -1,93 +1,71 @@
-import asyncio
-import threading
 import requests
+import time
 from telegram import Bot
-from datetime import datetime
-import pytz
 
 BOT_TOKEN = "8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk"
-PRIVATE_CHANNEL = "-1002608482349"
+CHANNEL_ID = "-1002608482349"
 FINNHUB_API = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
 
 bot = Bot(token=BOT_TOKEN)
 sent_tickers = set()
 
-def fetch_gainers():
-    url = "https://quotes-gw.webullfintech.com/api/information/securities/top?regionId=6&topSecType=1"
-    headers = {"accept": "application/json", "User-Agent": "Mozilla/5.0"}
+def get_stocks():
+    url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_API}"
     try:
-        res = requests.get(url, headers=headers).json()
-        results = []
-        for item in res.get("data", []):
-            try:
-                ticker = item["ticker"]
-                price = float(item["lastDone"])
-                volume = float(item["volume"])
-                change = float(item["chgRate"])
-                open_price = float(item["open"])
-                prev_close = float(item["close"])
-                results.append({
-                    "ticker": ticker,
-                    "price": price,
-                    "volume": volume,
-                    "change": change,
-                    "open_price": open_price,
-                    "prev_close": prev_close,
-                })
-            except:
-                continue
-        return results
+        res = requests.get(url).json()
+        return [s["symbol"] for s in res if s.get("type") == "Common Stock"]
     except Exception as e:
-        print("❌ Webull Gainers error:", e)
+        print("❌ Error fetching symbols:", e)
         return []
 
-def get_prev_high(ticker):
+def passes_filters(symbol):
     try:
-        url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution=5&count=2&token={FINNHUB_API}"
-        res = requests.get(url).json()
-        if res.get("s") != "ok":
-            return None
-        highs = res.get("h", [])
-        if len(highs) >= 2:
-            return highs[-2]
-    except Exception as e:
-        print(f"❌ Error get_prev_high for {ticker}:", e)
-    return None
+        q = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_API}"
+        res = requests.get(q).json()
 
-def get_resistance(ticker):
-    try:
-        url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution=3&count=100&token={FINNHUB_API}"
-        res = requests.get(url).json()
-        if res.get("s") != "ok":
-            return None
-        highs = res.get("h", [])
-        closes = res.get("c", [])
-        if not highs or not closes:
-            return None
-        last_close = closes[-1]
-        resistances = [h for h in highs if h > last_close and h - last_close < 0.3]
-        if resistances:
-            return round(min(resistances), 2)
-    except Exception as e:
-        print(f"❌ Error get_resistance for {ticker}:", e)
-    return None
+        c = res.get("c", 0)  # current price
+        pc = res.get("pc", 0)  # previous close
+        o = res.get("o", 0)  # open
+        v = res.get("v", 0)  # volume
 
-def get_vwap(ticker):
+        if not all([c, pc, o, v]) or c < 1 or c > 5:
+            return False
+
+        pct_from_open = ((c - o) / o) * 100
+        pct_from_close = ((c - pc) / pc) * 100
+
+        url = f"https://finnhub.io/api/v1/stock/metric?symbol={symbol}&metric=all&token={FINNHUB_API}"
+        metric = requests.get(url).json().get("metric", {})
+        avg_vol_10d = metric.get("10DayAverageTradingVolume", 1)
+
+        if (
+            pct_from_open >= 10 and
+            pct_from_close >= 0 and
+            v >= 5_000_000 and
+            v >= avg_vol_10d * 5
+        ):
+            return True
+    except:
+        pass
+    return False
+
+def get_vwap(symbol):
     try:
-        url = f"https://finnhub.io/api/v1/indicator?symbol={ticker}&resolution=3&indicator=vwap&token={FINNHUB_API}"
+        url = f"https://finnhub.io/api/v1/indicator?symbol={symbol}&resolution=3&indicator=vwap&token={FINNHUB_API}"
         res = requests.get(url).json()
         if "vwap" in res and res["vwap"]:
             return round(res["vwap"][-1], 2)
-    except Exception as e:
-        print(f"❌ Error get_vwap for {ticker}:", e)
+    except:
+        pass
     return None
 
-def generate_message(ticker, entry):
+def send_recommendation(symbol, entry):
     targets = [round(entry * (1 + i / 100), 2) for i in [0.08, 0.15, 0.25, 0.40]]
     stop = round(entry * 0.91, 2)
-    return f"""🚨 توصية اليوم 🚨
 
-📉 سهم: {ticker}
+    message = f"""🚨 توصية اليوم 🚨
+
+📉 سهم: {symbol}
 📥 دخول: {entry}
 🎯 أهداف:
 - {targets[0]}
@@ -98,66 +76,25 @@ def generate_message(ticker, entry):
 
 #توصيات_الأسهم"""
 
-def within_trading_hours():
-    now = datetime.now(pytz.timezone("Asia/Riyadh"))
-    start = now.replace(hour=11, minute=0, second=0, microsecond=0)
-    end = now.replace(hour=22, minute=30, second=0, microsecond=0)
-    return start <= now <= end
+    bot.send_message(chat_id=CHANNEL_ID, text=message)
+    print(f"✅ تم إرسال {symbol}")
 
-async def check_and_send():
-    print("📡 بدأ الفحص")
+def run_bot():
+    print("🚀 بدأ التشغيل...")
+    symbols = get_stocks()
+    print(f"📊 عدد الأسهم للفحص: {len(symbols)}")
 
-    # احذف شرط السوق مؤقتًا للتجربة
-    # if not within_trading_hours():
-    #     print("⏳ السوق مغلق حالياً")
-    #     return
+    for symbol in symbols:
+        if symbol in sent_tickers:
+            continue
+        if passes_filters(symbol):
+            entry = get_vwap(symbol)
+            if entry:
+                send_recommendation(symbol, entry)
+                sent_tickers.add(symbol)
+        time.sleep(0.5)  # لتجنب حظر API
 
-    print("✅ شغال تمام... جاري الفحص")
-
-    gainers = fetch_gainers()
-    print(f"📊 تم جلب {len(gainers)} سهم من Webull")
-
-    for stock in gainers:
-        ticker = stock["ticker"]
-        price = stock["price"]
-        volume = stock["volume"]
-        change = stock["change"]
-        open_price = stock["open_price"]
-        prev_close = stock["prev_close"]
-
-        if (
-            1 <= price <= 10 and
-            volume >= 700_000 and
-            price > prev_close and
-            ((price - open_price) / open_price) * 100 >= 10 and
-            change >= 10 and
-            ticker not in sent_tickers
-        ):
-            prev_high = get_prev_high(ticker)
-            if prev_high and price <= prev_high:
-                continue
-
-            resistance = get_resistance(ticker)
-            entry = resistance if resistance else get_vwap(ticker)
-            if not entry:
-                entry = round(price * 1.05, 2)
-
-            msg = generate_message(ticker, entry)
-            await bot.send_message(chat_id=PRIVATE_CHANNEL, text=msg)
-            print(f"✅ تم إرسال: {ticker} عند {entry}")
-            sent_tickers.add(ticker)
-
-async def main_loop():
-    print("🚀 بدأ التشغيل الكامل للبوت...")
-    while True:
-        await check_and_send()
-        await asyncio.sleep(20)
-
-def run_loop():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main_loop())
-
-if __name__ == "__main__":
-    t = threading.Thread(target=run_loop)
-    t.start()
+while True:
+    run_bot()
+    print("⏳ في انتظار الفحص القادم...")
+    time.sleep(1800)  # كل 30 دقيقة
