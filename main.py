@@ -17,51 +17,40 @@ timezone = pytz.timezone('Asia/Riyadh')
 
 def get_filtered_stocks():
     market_url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
-    response = requests.get(market_url)
-
-    try:
-        symbols_data = response.json()
-    except:
-        print("❌ فشل في تحويل JSON")
-        return []
-
+    response = requests.get(market_url).json()
     filtered = []
 
-    for sym in symbols_data:
-        if not isinstance(sym, dict):
-            continue
-
-        symbol = sym.get("symbol")
-        if not symbol or "." in symbol:
-            continue
-
-        quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
-        data = requests.get(quote_url).json()
-
+    for item in response:
         try:
+            symbol = item["symbol"]
+            if "." in symbol:
+                continue
+
+            quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
+            data = requests.get(quote_url).json()
+
             c = data.get("c", 0)
             pc = data.get("pc", 0)
             o = data.get("o", 0)
             vol = data.get("v", 0)
 
-            if not all([c, pc, o]):
+            if not all([c, pc, o]) or c < 0.1 or c > 1000:
                 continue
 
             change_from_open = (c - o) / o * 100
-            volume_ratio = vol / 1000000
+            volume_ratio = vol / 1_000_000
 
             if (
-                1 <= c <= 5 and
                 c > pc and
-                change_from_open >= 10 and
-                volume_ratio >= 5
+                change_from_open >= 3 and
+                volume_ratio >= 1
             ):
+                print(f"✅ {symbol} - السعر {c:.2f} - التغيير {change_from_open:.2f}% - الحجم {vol}")
                 filtered.append(symbol)
                 if len(filtered) >= 3:
                     break
-
         except Exception as e:
-            print(f"⚠️ خطأ في تحليل بيانات {symbol}: {e}")
+            print(f"خطأ في {symbol}: {e}")
             continue
 
     print(f"📈 عدد الأسهم المطابقة: {len(filtered)}")
@@ -99,8 +88,7 @@ def send_recommendation(symbol, entry):
     print(f"✅ تم إرسال التوصية: {symbol} | دخول: {entry}")
 
 def run():
-    now = datetime.datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')
-    print(f"📡 بدأ الفحص في: {now}")
+    print("📡 بدأ الفحص في:", datetime.datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S'))
     symbols = get_filtered_stocks()
 
     for sym in symbols:
