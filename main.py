@@ -157,9 +157,10 @@ async def check_and_send():
 async def main_loop():
     print("🚀 بدأ التشغيل الكامل للبوت...")
     while True:
+        print("📡 بدأ الفحص")
         await check_and_send()
         await asyncio.sleep(20)
-
+        
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main_loop())
