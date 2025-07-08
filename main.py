@@ -25,7 +25,6 @@ def fetch_gainers():
                 change = float(item["chgRate"])
                 open_price = float(item["open"])
                 prev_close = float(item["close"])
-                print(f"🔎 فحص: {ticker} | {price}$ | Volume: {volume} | Change: {change}%")
                 results.append({
                     "ticker": ticker,
                     "price": price,
@@ -40,6 +39,19 @@ def fetch_gainers():
     except Exception as e:
         print("❌ Webull Gainers error:", e)
         return []
+
+def get_prev_high(ticker):
+    try:
+        url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution=5&count=2&token={FINNHUB_API}"
+        res = requests.get(url).json()
+        if res.get("s") != "ok":
+            return None
+        highs = res.get("h", [])
+        if len(highs) >= 2:
+            return highs[-2]
+    except Exception as e:
+        print(f"❌ Error get_prev_high for {ticker}:", e)
+    return None
 
 def get_resistance(ticker):
     try:
@@ -117,6 +129,10 @@ async def check_and_send():
             change >= 10 and
             ticker not in sent_tickers
         ):
+            prev_high = get_prev_high(ticker)
+            if prev_high and price <= prev_high:
+                continue
+
             resistance = get_resistance(ticker)
             entry = resistance if resistance else get_vwap(ticker)
             if not entry:
@@ -133,5 +149,18 @@ async def main_loop():
         await check_and_send()
         await asyncio.sleep(20)
 
+# ✅ حل متوافق 100٪ مع سيرفر Render
+def start_bot():
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    try:
+        loop.run_until_complete(main_loop())
+    except Exception as e:
+        print("❌ Error running loop:", e)
+
 if __name__ == "__main__":
-    asyncio.run(main_loop())
+    start_bot()
