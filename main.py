@@ -19,9 +19,11 @@ def get_filtered_stocks():
     filtered = []
     for sym in data:
         try:
-            symbol = sym["symbol"] if isinstance(sym, dict) else sym
-            print(f"🔍 فحص السهم: {symbol}")
-
+            try:
+    symbol = sym["symbol"] if isinstance(sym, dict) else sym
+    print(f"🔍 فحص السهم: {symbol}")
+except Exception as e:
+    print(f"🔍 فحص السهم: error - {e}")
             quote_url = f"{FINNHUB_URL}/quote?symbol={symbol}&token={API_KEY}"
             quote = requests.get(quote_url).json()
 
