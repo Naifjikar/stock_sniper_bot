@@ -18,26 +18,26 @@ def get_filtered_stocks():
 
     filtered = []
     for sym in data:
-        try:
-            symbol = sym["symbol"] if isinstance(sym, dict) else sym
-            print(f"🔍 فحص السهم: {sym} - error: {e}")
+    try:
+        symbol = sym["symbol"] if isinstance(sym, dict) else sym
+        print(f"🔍 فحص السهم: {symbol}")
 
-            quote_url = f"{FINNHUB_URL}/quote?symbol={symbol}&token={API_KEY}"
-            quote = requests.get(quote_url).json()
+        quote_url = f"{FINNHUB_URL}/quote?symbol={symbol}&token={API_KEY}"
+        quote = requests.get(quote_url).json()
 
-            current_price = quote.get("c", 0)
-            open_price = quote.get("o", 0)
-            volume = quote.get("v", 0)
+        current_price = quote.get("c", 0)
+        open_price = quote.get("o", 0)
+        volume = quote.get("v", 0)
 
-            if (
-                0.1 <= current_price <= 1000 and
-                current_price > open_price and
-                volume > 5_000_000
-            ):
-                filtered.append(symbol)
+        if (
+            0.1 <= current_price <= 1000 and
+            current_price > open_price and
+            volume > 5_000_000
+        ):
+            filtered.append(symbol)
 
-        except Exception as e:
-            print(f"❌ خطأ في السهم {sym}: {e}")
+    except Exception as e:
+        print(f"❌ خطأ في السهم {sym}: {e}")
 
     return filtered
 
