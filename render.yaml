@@ -1,0 +1,7 @@
+services:
+  - type: worker
+    name: stock-filter-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
