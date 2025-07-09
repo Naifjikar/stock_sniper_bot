@@ -37,7 +37,7 @@ def get_filtered_stocks():
                 filtered.append(symbol)
 
         except Exception as e:
-            print(f"❌ خطأ في {sym}: {e}")
+            print(f"❌ خطأ في السهم {sym}: {e}")
 
     return filtered
 
