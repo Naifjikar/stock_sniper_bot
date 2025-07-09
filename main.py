@@ -1,5 +1,4 @@
 import requests
-import time
 from datetime import datetime
 from telegram import Bot
 
@@ -7,7 +6,7 @@ API_KEY = "PDTlX9ib5N6laEnauklHAgoN8UGr12uh"
 FINNHUB_URL = "https://finnhub.io/api/v1"
 
 TOKEN = "8085180830:AAFJqSio_7BJ3n_1jbeHvYEZU5FmDJkT_Dw"
-CHANNEL_ID = -1002138790851  # قناة صيد الأسهم الخاصة
+CHANNEL_ID = -1002138790851  # قناة صيد الأسهم
 
 bot = Bot(token=TOKEN)
 
@@ -19,7 +18,7 @@ def get_filtered_stocks():
     filtered = []
     for sym in data:
         try:
-            symbol = sym["symbol"] if isinstance(sym, dict) else sym
+            symbol = sym.get("symbol") if isinstance(sym, dict) else str(sym)
             print(f"🔍 فحص السهم: {symbol}")
 
             quote_url = f"{FINNHUB_URL}/quote?symbol={symbol}&token={API_KEY}"
@@ -37,7 +36,7 @@ def get_filtered_stocks():
                 filtered.append(symbol)
 
         except Exception as e:
-            print(f"❌ خطأ في {sym}: {e}")
+            print(f"❌ خطأ في فحص السهم {sym}: {e}")
 
     return filtered
 
@@ -47,8 +46,8 @@ def send_stock_recommendation(symbol):
         vwap_data = requests.get(vwap_url).json()
 
         vwap_value = vwap_data.get("vwap", [])
-        if not vwap_value:
-            print(f"🚫 لا يوجد VWAP للسهم: {symbol}")
+        if not vwap_value or not isinstance(vwap_value, list):
+            print(f"🚫 لا يوجد VWAP صالح للسهم: {symbol}")
             return
 
         entry_price = round(vwap_value[-1], 2)
@@ -74,7 +73,7 @@ def send_stock_recommendation(symbol):
         print(f"❌ فشل إرسال توصية {symbol}: {e}")
 
 def run():
-    print("🚀 بدأ الفحص في:", datetime.now().strftime("%d-%m-%Y %I:%M:%S %p"))
+    print("🚀 بدأ الفحص في:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     symbols = get_filtered_stocks()
     for symbol in symbols[:4]:
         send_stock_recommendation(symbol)
