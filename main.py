@@ -5,29 +5,29 @@ import pytz
 from telegram import Bot
 
 # إعدادات البوت
-TOKEN = '8085180830:AAFJqSio_7BJ3n_1jbeHvYEZU5FmDJkT_Dw'
-CHANNEL_ID = '-1002757012569'
+TOKEN = 'ضع_توكن_البوت_هنا'
+CHANNEL_ID = '-100xxxxxxxxxx'  # قناة تيليجرام الخاصة
 bot = Bot(token=TOKEN)
 
-# مفتاح API
-FINNHUB_KEY = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
+# مفتاح API من Finnhub
+FINNHUB_KEY = "ضع_مفتاح_API_من_Finnhub"
 
 # توقيت السعودية
 timezone = pytz.timezone('Asia/Riyadh')
 
 def get_filtered_stocks():
-    market_url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
+    url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
     try:
-        symbols = requests.get(market_url, timeout=10).json()
+        response = requests.get(url, timeout=15)
+        symbols = response.json()
     except:
-        print("❌ فشل في جلب رموز الأسهم من السوق")
+        print("❌ فشل في جلب الرموز.")
         return []
 
     filtered = []
-
     for sym in symbols:
         try:
-            symbol = sym["symbol"] if isinstance(sym, dict) and "symbol" in sym else None
+            symbol = sym.get("symbol")
             if not symbol or "." in symbol:
                 continue
 
@@ -37,28 +37,19 @@ def get_filtered_stocks():
             c = data.get("c", 0)
             pc = data.get("pc", 0)
             o = data.get("o", 0)
-            vol = data.get("v", 0)
+            v = data.get("v", 0)
 
             if not all([c, pc, o]):
                 continue
 
-            change_from_open = (c - o) / o * 100
-            volume_ratio = vol / 1_000_000
-
-            if (
-                1 <= c <= 5 and
-                c > pc and
-                change_from_open >= 10 and
-                volume_ratio >= 5
-            ):
-                print(f"✅ {symbol} | سعر: {c} | تغير: {round(change_from_open, 2)}% | حجم: {round(volume_ratio, 1)}M")
+            change = ((c - o) / o) * 100
+            if 1 <= c <= 5 and c > pc and change >= 10 and v >= 5_000_000:
                 filtered.append(symbol)
-
+                print(f"✅ {symbol} | سعر: {c} | تغيير: {round(change, 2)}% | حجم: {v}")
             if len(filtered) >= 3:
                 break
-
         except Exception as e:
-            print(f"⚠️ خطأ في السهم {sym}: {e}")
+            print(f"⚠️ خطأ في {sym}: {e}")
             continue
 
     print(f"📈 عدد الأسهم المطابقة: {len(filtered)}")
@@ -71,18 +62,12 @@ def get_entry_point(symbol):
         last_vwap = res["vwap"][-1]
         return round(last_vwap, 2)
     except:
-        print(f"❌ لا يوجد VWAP لـ {symbol}")
+        print(f"❌ لا يمكن حساب VWAP لـ {symbol}")
         return None
 
 def send_recommendation(symbol, entry):
-    targets = [
-        round(entry + 0.08, 2),
-        round(entry + 0.15, 2),
-        round(entry + 0.25, 2),
-        round(entry + 0.40, 2)
-    ]
+    targets = [round(entry + 0.08, 2), round(entry + 0.15, 2), round(entry + 0.25, 2), round(entry + 0.40, 2)]
     stop = round(entry - 0.09, 2)
-
     msg = f"""
 📍 {symbol}
 دخول: {entry}
@@ -94,16 +79,16 @@ def send_recommendation(symbol, entry):
 وقف: {stop}
 """
     try:
-        bot.send_message(chat_id=CHANNEL_ID, text=msg, parse_mode=constants.ParseMode.HTML)
-        print(f"📤 تم إرسال التوصية: {symbol} | دخول: {entry}")
+        bot.send_message(chat_id=CHANNEL_ID, text=msg)
+        print(f"📤 تم إرسال التوصية: {symbol}")
     except Exception as e:
-        print(f"❌ فشل إرسال التوصية لـ {symbol}: {e}")
+        print(f"❌ فشل إرسال {symbol}: {e}")
 
 def run():
     now = datetime.datetime.now(timezone)
     print("📡 بدأ الفحص في:", now.strftime('%Y-%m-%d %H:%M:%S'))
-    symbols = get_filtered_stocks()
 
+    symbols = get_filtered_stocks()
     for sym in symbols:
         entry = get_entry_point(sym)
         if entry:
@@ -111,6 +96,10 @@ def run():
         else:
             print(f"🚫 تجاهل {sym} بسبب عدم وجود نقطة دخول")
 
-while True:
-    run()
-    time.sleep(600)
+# لتشغيل فوري لمرة واحدة
+run()
+
+# أو لتكرار كل 10 دقائق
+# while True:
+#     run()
+#     time.sleep(600)
