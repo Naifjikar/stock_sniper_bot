@@ -1,27 +1,26 @@
 import requests
+import time
 import datetime
 import pytz
-from telegram import Bot
+import telegram
 
 # إعدادات البوت
-TOKEN = "8085180830:AAFJqSio_7BJ3n_1jbeHvYEZU5FmDJkT_Dw"
-CHANNEL_ID = -1002757012569
-bot = Bot(token=TOKEN)
+TOKEN = '8085180830:AAFJqSio_7BJ3n_1jbeHvYEZU5FmDJkT_Dw'
+CHANNEL_ID = '-1002757012569'
+bot = telegram.Bot(token=TOKEN)
 
-# مفتاح Finnhub
+# API Key
 FINNHUB_KEY = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
-FINNHUB_URL = "https://finnhub.io/api/v1"
 
-# المنطقة الزمنية
-timezone = pytz.timezone("Asia/Riyadh")
-now = datetime.datetime.now(timezone)
+# توقيت السعودية
+timezone = pytz.timezone('Asia/Riyadh')
 
 def get_filtered_stocks():
-    url = f"{FINNHUB_URL}/stock/symbol?exchange=US&token={FINNHUB_KEY}"
+    url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
     try:
         symbols = requests.get(url, timeout=10).json()
     except:
-        print("❌ فشل جلب الرموز")
+        print("❌ فشل في جلب الرموز")
         return []
 
     filtered = []
@@ -30,61 +29,80 @@ def get_filtered_stocks():
         if not symbol or "." in symbol:
             continue
         try:
-            q_url = f"{FINNHUB_URL}/quote?symbol={symbol}&token={FINNHUB_KEY}"
-            data = requests.get(q_url, timeout=10).json()
-            c = data.get("c", 0)
-            pc = data.get("pc", 0)
-            o = data.get("o", 0)
-            v = data.get("v", 0)
-            if not all([c, pc, o]) or c < 1 or c > 5 or c <= pc:
+            q = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
+            data = requests.get(q, timeout=10).json()
+            c, pc, o, v = data.get("c", 0), data.get("pc", 0), data.get("o", 0), data.get("v", 0)
+
+            if not all([c, pc, o]) or v == 0:
                 continue
-            if (c - o) / o * 100 >= 10 and v >= 5_000_000:
+
+            chg = (c - o) / o * 100
+            if 1 <= c <= 5 and c > pc and chg >= 10 and v >= 5_000_000:
+                print(f"✅ {symbol} | سعر: {c} | تغيير: {round(chg,2)}% | حجم: {round(v/1_000_000,1)}M")
                 filtered.append(symbol)
+
             if len(filtered) >= 4:
                 break
-        except:
+        except Exception as e:
+            print(f"⚠️ خطأ {symbol}: {e}")
             continue
+
     return filtered
 
-def get_entry_price(symbol):
+def get_vwap(symbol):
+    url = f"https://finnhub.io/api/v1/indicator?symbol={symbol}&resolution=3&indicator=vwap&token={FINNHUB_KEY}"
     try:
-        vwap_url = f"{FINNHUB_URL}/indicator?symbol={symbol}&resolution=3&indicator=vwap&token={FINNHUB_KEY}"
-        res = requests.get(vwap_url, timeout=10).json()
-        vwap = res.get("vwap", [])
-        if not vwap:
+        res = requests.get(url, timeout=10).json()
+        return round(res["vwap"][-1], 2)
+    except:
+        return None
+
+def get_resistance(symbol):
+    candles_url = f"https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=3&count=30&token={FINNHUB_KEY}"
+    try:
+        r = requests.get(candles_url, timeout=10).json()
+        if r["s"] != "ok":
             return None
-        return round(vwap[-1], 2)
+        highs = r["h"][-10:]
+        return round(max(highs), 2)
     except:
         return None
 
 def send_recommendation(symbol, entry):
-    t1 = round(entry + 0.08, 2)
-    t2 = round(entry + 0.15, 2)
-    t3 = round(entry + 0.25, 2)
-    t4 = round(entry + 0.40, 2)
+    targets = [round(entry + x, 2) for x in [0.08, 0.15, 0.25, 0.4]]
     stop = round(entry - 0.09, 2)
 
     msg = f"""
-📈 {symbol}
-📥 دخول: {entry}
-🎯 أهداف: {t1} - {t2} - {t3} - {t4}
-🛑 وقف: {stop}
+📍 {symbol}
+دخول: {entry}
+أهداف:
+- {targets[0]}
+- {targets[1]}
+- {targets[2]}
+- {targets[3]}
+وقف: {stop}
 """
     try:
-        bot.send_message(chat_id=CHANNEL_ID, text=msg.strip())
-        print(f"✅ أُرسلت توصية {symbol}")
+        bot.send_message(chat_id=CHANNEL_ID, text=msg)
+        print(f"📤 تم إرسال التوصية: {symbol}")
     except Exception as e:
         print(f"❌ فشل إرسال {symbol}: {e}")
 
 def run():
-    bot.send_message(chat_id=CHANNEL_ID, text=f"📡 بدأ الفحص في: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-    stocks = get_filtered_stocks()
-    for symbol in stocks:
-        entry = get_entry_price(symbol)
-        if entry:
+    now = datetime.datetime.now(timezone)
+    print("📡 بدأ الفحص في:", now.strftime('%Y-%m-%d %H:%M:%S'))
+    symbols = get_filtered_stocks()
+
+    for symbol in symbols:
+        vwap = get_vwap(symbol)
+        res = get_resistance(symbol)
+        if vwap and res:
+            entry = min(vwap, res)
             send_recommendation(symbol, entry)
         else:
-            print(f"🚫 لا يوجد VWAP لـ {symbol}")
+            print(f"🚫 تجاهل {symbol} لعدم توفر VWAP أو مقاومة")
 
-if __name__ == "__main__":
+# تشغيل كل 10 دقائق
+while True:
     run()
+    time.sleep(600)
