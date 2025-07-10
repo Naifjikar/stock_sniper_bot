@@ -25,7 +25,11 @@ def get_filtered_stocks():
     filtered = []
 
     for sym in data:
-        symbol = sym.get("symbol", "")
+        if isinstance(sym, dict):
+            symbol = sym.get("symbol", "")
+        else:
+            continue
+
         if not symbol or "." in symbol:
             continue
 
@@ -119,4 +123,4 @@ def run():
 if __name__ == "__main__":
     while True:
         run()
-        time.sleep(600)
+        time.sleep(600)  # كل 10 دقائق
