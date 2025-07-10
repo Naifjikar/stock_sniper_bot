@@ -9,7 +9,6 @@ CHANNEL_ID = '-1002757012569'
 FINNHUB_KEY = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
 timezone = pytz.timezone('Asia/Riyadh')
 
-
 def send_message(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {
@@ -18,18 +17,16 @@ def send_message(text):
     }
     try:
         r = requests.post(url, data=payload)
-        if r.status_code != 200:
-            print("❌ فشل إرسال الرسالة:", r.text)
+        print("📬 Telegram response:", r.status_code, r.text)
     except Exception as e:
-        print("❌ خطأ في الإرسال:", e)
-
+        print("❌ خطأ في إرسال الرسالة:", e)
 
 def get_filtered_stocks():
     url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
     try:
         data = requests.get(url).json()
     except Exception as e:
-        print("❌ فشل في تحميل الرموز:", e)
+        print("❌ فشل تحميل الرموز:", e)
         return []
 
     filtered = []
@@ -65,7 +62,6 @@ def get_filtered_stocks():
             continue
     return filtered
 
-
 def run():
     now = datetime.datetime.now(timezone)
     send_message(f"📡 بدأ الفحص: {now.strftime('%H:%M:%S')}")
@@ -73,7 +69,6 @@ def run():
     stocks = get_filtered_stocks()
     for sym in stocks:
         send_message(f"🚀 سهم بداية انطلاق: {sym}")
-
 
 if __name__ == "__main__":
     while True:
