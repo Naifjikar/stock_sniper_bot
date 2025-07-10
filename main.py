@@ -26,11 +26,11 @@ def get_filtered_stocks():
     filtered = []
 
     for sym in symbols:
-        symbol = sym.get("symbol")
-        if not symbol or "." in symbol:
-            continue
-
         try:
+            symbol = sym["symbol"] if isinstance(sym, dict) and "symbol" in sym else None
+            if not symbol or "." in symbol:
+                continue
+
             quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
             data = requests.get(quote_url, timeout=10).json()
 
@@ -58,7 +58,7 @@ def get_filtered_stocks():
                 break
 
         except Exception as e:
-            print(f"⚠️ خطأ في السهم {symbol}: {e}")
+            print(f"⚠️ خطأ في السهم {sym}: {e}")
             continue
 
     print(f"📈 عدد الأسهم المطابقة: {len(filtered)}")
