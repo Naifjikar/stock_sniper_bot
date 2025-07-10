@@ -94,7 +94,7 @@ def send_recommendation(symbol, entry):
 وقف: {stop}
 """
     try:
-        bot.send_message(chat_id=CHANNEL_ID, text=msg)
+        bot.send_message(chat_id=CHANNEL_ID, text=msg, parse_mode=constants.ParseMode.HTML)
         print(f"📤 تم إرسال التوصية: {symbol} | دخول: {entry}")
     except Exception as e:
         print(f"❌ فشل إرسال التوصية لـ {symbol}: {e}")
