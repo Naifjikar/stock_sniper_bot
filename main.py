@@ -1,31 +1,18 @@
 import requests
+import time
 import datetime
 import pytz
 import telegram
-import time
 
 # إعدادات البوت
 TOKEN = '8085180830:AAFJqSio_7BJ3n_1jbeHvYEZU5FmDJkT_Dw'
 CHANNEL_ID = '-1002757012569'
 bot = telegram.Bot(token=TOKEN)
 
-# إعدادات المنطقة الزمنية
-timezone = pytz.timezone('Asia/Riyadh')
-
-# مفتاح API
+# API و توقيت
 FINNHUB_KEY = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
-
-# الأسهم التي تم إرسالها اليوم
+timezone = pytz.timezone('Asia/Riyadh')
 sent_today = set()
-last_reset_date = datetime.datetime.now(timezone).date()
-
-
-def reset_sent_list_if_new_day():
-    global sent_today, last_reset_date
-    today = datetime.datetime.now(timezone).date()
-    if today != last_reset_date:
-        sent_today.clear()
-        last_reset_date = today
 
 
 def get_filtered_stocks():
@@ -39,6 +26,9 @@ def get_filtered_stocks():
     filtered = []
 
     for sym in data:
+        if not isinstance(sym, dict):
+            continue
+
         symbol = sym.get("symbol", "")
         if not symbol or "." in symbol or symbol in sent_today:
             continue
@@ -52,7 +42,7 @@ def get_filtered_stocks():
             o = quote.get("o", 0)
             vol = quote.get("v", 0)
 
-            if not all([c, pc, o]) or vol == 0:
+            if not all([c, pc, o]) or vol < 700_000:
                 continue
 
             change = (c - o) / o * 100
@@ -60,36 +50,35 @@ def get_filtered_stocks():
             if (
                 1 <= c <= 5 and
                 c > pc and
-                change >= 10 and
-                vol > 5_000_000
+                change >= 10
             ):
                 filtered.append(symbol)
 
-        except Exception:
+        except:
             continue
 
     return filtered
 
 
 def send_alert(symbol):
-    msg = f"🚀 بداية انطلاق\n📈 السهم: {symbol}"
+    message = f"📢 سهم {symbol} - بداية انطلاق"
     try:
-        bot.send_message(chat_id=CHANNEL_ID, text=msg)
-        print(f"📤 تم إرسال: {symbol}")
+        bot.send_message(chat_id=CHANNEL_ID, text=message)
         sent_today.add(symbol)
     except Exception as e:
         print(f"❌ فشل إرسال {symbol}: {e}")
 
 
 def run():
-    reset_sent_list_if_new_day()
-    stocks = get_filtered_stocks()
-    for s in stocks:
-        send_alert(s)
+    now = datetime.datetime.now(timezone)
+    print(f"✅ تشغيل الفحص: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    symbols = get_filtered_stocks()
+    for sym in symbols:
+        send_alert(sym)
 
 
-# تكرار كل دقيقة
 if __name__ == "__main__":
     while True:
         run()
-        time.sleep(60)
+        time.sleep(600)  # كل 10 دقائق
