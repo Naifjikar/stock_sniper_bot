@@ -2,17 +2,17 @@ import requests
 import time
 import datetime
 import pytz
-import telegram
+from telegram import Bot
 
 # إعدادات البوت
 TOKEN = '8085180830:AAFJqSio_7BJ3n_1jbeHvYEZU5FmDJkT_Dw'
-CHANNEL_ID = '-1002757012569'  # قناة توصيات الأسهم
-bot = telegram.Bot(token=TOKEN)
+CHANNEL_ID = '-1002757012569'
+bot = Bot(token=TOKEN)
 
-# API مفتاح
+# مفتاح API
 FINNHUB_KEY = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
 
-# التوقيت المحلي للسعودية
+# توقيت السعودية
 timezone = pytz.timezone('Asia/Riyadh')
 
 def get_filtered_stocks():
@@ -20,7 +20,7 @@ def get_filtered_stocks():
     try:
         symbols = requests.get(market_url, timeout=10).json()
     except:
-        print("❌ فشل في جلب رموز الأسهم من المصدر")
+        print("❌ فشل في جلب رموز الأسهم من السوق")
         return []
 
     filtered = []
@@ -111,7 +111,6 @@ def run():
         else:
             print(f"🚫 تجاهل {sym} بسبب عدم وجود نقطة دخول")
 
-# حلقة مستمرة كل 10 دقائق
 while True:
     run()
     time.sleep(600)
