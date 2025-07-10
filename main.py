@@ -9,102 +9,114 @@ TOKEN = '8085180830:AAFJqSio_7BJ3n_1jbeHvYEZU5FmDJkT_Dw'
 CHANNEL_ID = '-1002757012569'
 bot = telegram.Bot(token=TOKEN)
 
-# API من Finnhub
+# API
 FINNHUB_KEY = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
 timezone = pytz.timezone('Asia/Riyadh')
+
 
 def get_filtered_stocks():
     url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
     try:
-        symbols = requests.get(url, timeout=10).json()
-    except:
-        print("❌ فشل في جلب رموز الأسهم")
+        data = requests.get(url).json()
+    except Exception as e:
+        print(f"❌ فشل في جلب الرموز: {e}")
         return []
 
     filtered = []
-    for sym in symbols:
-        try:
-            symbol = sym.get("symbol")
-            if not symbol or "." in symbol:
-                continue
 
+    for sym in data:
+        symbol = sym.get("symbol", "")
+        if not symbol or "." in symbol:
+            continue
+
+        try:
             quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
-            quote = requests.get(quote_url, timeout=10).json()
+            quote = requests.get(quote_url).json()
 
             c = quote.get("c", 0)
             pc = quote.get("pc", 0)
             o = quote.get("o", 0)
-            v = quote.get("v", 0)
+            vol = quote.get("v", 0)
 
-            if not all([c, pc, o, v]):
+            if not all([c, pc, o]) or vol == 0:
                 continue
 
-            change_from_open = (c - o) / o * 100
-            volume_millions = v / 1_000_000
-
-            if 1 <= c <= 5 and c > pc and change_from_open >= 10 and volume_millions >= 5:
-                print(f"✅ {symbol} | السعر: {c} | التغير: {round(change_from_open, 2)}% | الحجم: {round(volume_millions, 1)}M")
+            change = (c - o) / o * 100
+            if (
+                1 <= c <= 5 and
+                c > pc and
+                change >= 10 and
+                vol > 5_000_000
+            ):
+                print(f"✅ {symbol} | السعر: {c} | التغير: {round(change, 1)}% | الحجم: {round(vol / 1_000_000, 1)}M")
                 filtered.append(symbol)
 
             if len(filtered) >= 3:
                 break
 
         except Exception as e:
-            print(f"⚠️ خطأ في {sym}: {e}")
+            print(f"⚠️ خطأ في {symbol}: {e}")
             continue
 
-    print(f"📈 الأسهم المختارة: {filtered}")
     return filtered
+
 
 def get_vwap_entry(symbol):
     url = f"https://finnhub.io/api/v1/indicator?symbol={symbol}&resolution=3&indicator=vwap&token={FINNHUB_KEY}"
     try:
-        res = requests.get(url, timeout=10).json()
-        last_vwap = res.get("vwap", [])[-1]
-        return round(last_vwap, 2)
+        res = requests.get(url).json()
+        last = res["vwap"][-1]
+        return round(last, 2)
     except:
-        print(f"❌ لا يوجد VWAP لـ {symbol}")
+        print(f"🚫 لا يوجد VWAP لـ {symbol}")
         return None
+
 
 def send_signal(symbol, entry):
     targets = [
         round(entry + 0.08, 2),
         round(entry + 0.15, 2),
         round(entry + 0.25, 2),
-        round(entry + 0.40, 2),
+        round(entry + 0.40, 2)
     ]
     stop = round(entry - 0.09, 2)
 
     msg = f"""
-📊 توصية سهم: {symbol}
+📍 {symbol}
 دخول: {entry}
 أهداف:
 - {targets[0]}
 - {targets[1]}
 - {targets[2]}
 - {targets[3]}
-وقف الخسارة: {stop}
-    """.strip()
-
+وقف: {stop}
+"""
     try:
         bot.send_message(chat_id=CHANNEL_ID, text=msg)
-        print(f"📤 تم إرسال التوصية لـ {symbol}")
+        print(f"📤 تم إرسال التوصية: {symbol}")
     except Exception as e:
-        print(f"❌ فشل إرسال {symbol}: {e}")
+        print(f"❌ فشل إرسال توصية {symbol}: {e}")
+
 
 def run():
     now = datetime.datetime.now(timezone)
-    print("📡 بدأ الفحص في:", now.strftime('%Y-%m-%d %H:%M:%S'))
+    start_msg = f"📡 بدأ الفحص في: {now.strftime('%Y-%m-%d %H:%M:%S')}"
+    print(start_msg)
+    try:
+        bot.send_message(chat_id=CHANNEL_ID, text=start_msg)
+    except Exception as e:
+        print(f"❌ فشل إرسال رسالة البدء: {e}")
 
     symbols = get_filtered_stocks()
-    for symbol in symbols:
-        entry = get_vwap_entry(symbol)
+    for sym in symbols:
+        entry = get_vwap_entry(sym)
         if entry:
-            send_signal(symbol, entry)
+            send_signal(sym, entry)
         else:
-            print(f"🚫 لا توجد نقطة دخول لـ {symbol}")
+            print(f"🚫 تجاهل {sym} بسبب عدم وجود نقطة دخول")
 
-# تشغيل مستمر كل 10 دقائق
-while True:
-    run()
-    time.sleep(600)
+
+if __name__ == "__main__":
+    while True:
+        run()
+        time.sleep(600)
