@@ -8,7 +8,6 @@ FINNHUB_KEY = "d1dqgr9r01qpp0b3fligd1dqgr9r01qpp0b3flj0"
 
 bot = Bot(token=TOKEN)
 
-# دالة الفلترة
 def get_filtered_stocks():
     url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
     try:
@@ -32,21 +31,23 @@ def get_filtered_stocks():
             pc = quote.get("pc", 0)
 
             if 1 <= c <= 5 and c > pc:
-                print(f"✅ {symbol} | السعر: {c} > إغلاق أمس: {pc}")
                 filtered.append(symbol)
 
             if len(filtered) >= 3:
                 break
 
         except Exception as e:
-            print(f"⚠️ خطأ في {symbol}: {e}")
             continue
 
     return filtered
 
-# الدالة الرئيسية
 async def main():
-    pass  # لسه ما نفذنا شيء، بس تأكد أنه يشتغل بدون خطأ
+    stocks = get_filtered_stocks()
 
-# تشغيل الكود
+    if stocks:
+        first = stocks[0]
+        await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 بداية انطلاق: ${first}")
+    else:
+        await bot.send_message(chat_id=CHANNEL_ID, text="❌ لا يوجد أسهم مطابقة حالياً.")
+
 asyncio.run(main())
