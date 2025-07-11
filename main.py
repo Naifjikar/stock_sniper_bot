@@ -27,11 +27,15 @@ def get_filtered_stocks():
             quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
             quote = requests.get(quote_url, timeout=10).json()
 
-            c = quote.get("c", 0)
-            pc = quote.get("pc", 0)
+            c = quote.get("c", 0)      # السعر الحالي
+pc = quote.get("pc", 0)    # إغلاق أمس
+o = quote.get("o", 0)      # سعر الافتتاح
 
-            if 1 <= c <= 5 and c > pc:
-                filtered.append(symbol)
+# نحسب نسبة التغير من الافتتاح
+change = ((c - o) / o) * 100 if o else 0
+
+if 1 <= c <= 7 and change >= 10:
+    filtered.append(symbol)
 
             if len(filtered) >= 3:
                 break
