@@ -53,6 +53,6 @@ async def main():
             first = stocks[0]
             await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 بداية انطلاق: ${first}")
 
-        await asyncio.sleep(300)  # انتظر 5 دقائق
+        await asyncio.sleep(180)  # انتظر 3 دقائق
 
 asyncio.run(main())
