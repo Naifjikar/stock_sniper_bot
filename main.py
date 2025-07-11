@@ -46,10 +46,13 @@ def get_filtered_stocks():
     return filtered
 
 async def main():
-    stocks = get_filtered_stocks()
+    while True:
+        stocks = get_filtered_stocks()
 
-    if stocks:
-        first = stocks[0]
-        await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 بداية انطلاق: ${first}")
+        if stocks:
+            first = stocks[0]
+            await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 بداية انطلاق: ${first}")
+
+        await asyncio.sleep(300)  # انتظر 5 دقائق
 
 asyncio.run(main())
