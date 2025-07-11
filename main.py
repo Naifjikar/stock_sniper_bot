@@ -3,7 +3,7 @@ import datetime
 import pytz
 
 # إعدادات البوت
-TOKEN = '8085180830:AAFJqSio_7BJ3n_1jbeHvYEZU5FmDJkT_Dw'
+TOKEN = '8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk
 CHANNEL_ID = '-1002757012569'
 
 # الوقت
