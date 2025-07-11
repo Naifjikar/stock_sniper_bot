@@ -11,7 +11,8 @@ bot = Bot(token=TOKEN)
 def get_filtered_stocks():
     url = f"https://finnhub.io/api/v1/stock/symbol?exchange=US&token={FINNHUB_KEY}"
     try:
-        data = requests.get(url, timeout=10).json()
+        response = requests.get(url, timeout=10)
+        data = response.json()
     except Exception as e:
         print(f"❌ خطأ في جلب الرموز: {e}")
         return []
@@ -19,6 +20,9 @@ def get_filtered_stocks():
     filtered = []
 
     for sym in data:
+        if not isinstance(sym, dict):
+            continue
+
         symbol = sym.get("symbol", "")
         if not symbol or "." in symbol:
             continue
@@ -27,11 +31,9 @@ def get_filtered_stocks():
             quote_url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
             quote = requests.get(quote_url, timeout=10).json()
 
-            c = quote.get("c", 0)      # السعر الحالي
-            pc = quote.get("pc", 0)    # إغلاق أمس
-            o = quote.get("o", 0)      # سعر الافتتاح
+            c = quote.get("c", 0)
+            o = quote.get("o", 0)
 
-            # نحسب نسبة التغير من الافتتاح
             change = ((c - o) / o) * 100 if o else 0
 
             if 1 <= c <= 7 and change >= 10:
@@ -53,6 +55,6 @@ async def main():
             first = stocks[0]
             await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 بداية انطلاق: ${first}")
 
-        await asyncio.sleep(300)  # انتظر 5 دقائق
+        await asyncio.sleep(300)  # 5 دقائق
 
 asyncio.run(main())
