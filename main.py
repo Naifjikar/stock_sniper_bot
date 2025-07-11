@@ -7,7 +7,7 @@ CHANNEL_ID = '-1002608482349'
 bot = Bot(token=TOKEN)
 
 async def main():
-    await bot.send_message(chat_id=CHANNEL_ID, text="🚀 بداية انطلاق: $TEST")
+    pass  # ما نسوي شيء الآن
 
 # تشغيل الكود
 asyncio.run(main())
