@@ -28,14 +28,14 @@ def get_filtered_stocks():
             quote = requests.get(quote_url, timeout=10).json()
 
             c = quote.get("c", 0)      # السعر الحالي
-pc = quote.get("pc", 0)    # إغلاق أمس
-o = quote.get("o", 0)      # سعر الافتتاح
+            pc = quote.get("pc", 0)    # إغلاق أمس
+            o = quote.get("o", 0)      # سعر الافتتاح
 
-# نحسب نسبة التغير من الافتتاح
-change = ((c - o) / o) * 100 if o else 0
+            # نحسب نسبة التغير من الافتتاح
+            change = ((c - o) / o) * 100 if o else 0
 
-if 1 <= c <= 7 and change >= 10:
-    filtered.append(symbol)
+            if 1 <= c <= 7 and change >= 10:
+                filtered.append(symbol)
 
             if len(filtered) >= 3:
                 break
@@ -51,7 +51,5 @@ async def main():
     if stocks:
         first = stocks[0]
         await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 بداية انطلاق: ${first}")
-    else:
-        await bot.send_message(chat_id=CHANNEL_ID, text="❌ لا يوجد أسهم مطابقة حالياً.")
 
 asyncio.run(main())
