@@ -35,11 +35,15 @@ def get_filtered_stocks():
         except ZeroDivisionError:
             continue
 
-        # شروطك الحالية
+        # شروط الفلترة
         if 1 <= current_price <= 7 and change >= 10:
             filtered.append((symbol, round(current_price, 2), round(change, 2)))
 
     print(f"📊 بعد الفلترة: {len(filtered)} سهم مطابق")
+    if filtered:
+        print("🟢 الأسهم المطابقة:")
+        for stock in filtered:
+            print(f"{stock[0]} - السعر: {stock[1]} - التغير: {stock[2]}%")
     return filtered
 
 # المهام الرئيسية
@@ -49,7 +53,7 @@ async def main():
         if stocks:
             await bot.send_message(chat_id=CHANNEL_ID, text=f"✅ عدد الأسهم المطابقة: {len(stocks)}")
             for symbol in stocks[:3]:  # فقط أول 3
-                await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 سهم محتمل: {symbol}")
-        else:
-            pass  # لا ترسل أي شيء إذا ما فيه أسهم
+                await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 سهم محتمل: {symbol[0]} - ${symbol[1]} (+{symbol[2]}%)")
         await asyncio.sleep(300)  # كل 5 دقائق
+
+asyncio.run(main())
