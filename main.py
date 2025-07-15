@@ -11,14 +11,15 @@ bot = Bot(token=TOKEN)
 def get_filtered_stocks():
     url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={POLYGON_KEY}"
     try:
-        data = requests.get(url, timeout=10).json()
+        res = requests.get(url, timeout=10)
+        data = res.json()
         tickers = data.get("tickers", [])
+        print(f"✅ جلب البيانات: {len(tickers)} سهم")
     except Exception as e:
-        print(f"❌ خطأ في جلب البيانات: {e}")
+        print(f"❌ خطأ في API: {e}")
         return []
 
     filtered = []
-
     for t in tickers:
         symbol = t.get("ticker", "")
         current_price = t.get("lastTrade", {}).get("p", 0)
@@ -32,15 +33,18 @@ def get_filtered_stocks():
         if 1 <= current_price <= 7 and change >= 10:
             filtered.append(symbol)
 
+    print(f"📊 بعد الفلترة: {len(filtered)} سهم مطابق")
     return filtered
 
 async def main():
     while True:
         stocks = get_filtered_stocks()
         if stocks:
-            for symbol in stocks:
+            await bot.send_message(chat_id=CHANNEL_ID, text=f"✅ عدد الأسهم المطابقة: {len(stocks)}")
+            for symbol in stocks[:3]:  # فقط أول 3
                 await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 سهم محتمل: {symbol}")
-        await asyncio.sleep(300)  # كل 5 دقايق
-        
+        else:
+            await bot.send_message(chat_id=CHANNEL_ID, text="🚫 لا يوجد أسهم مطابقة حالياً.")
+        await asyncio.sleep(300)  # كل 5 دقائق
 
 asyncio.run(main())
