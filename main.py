@@ -1,6 +1,7 @@
 import asyncio
 import requests
 from telegram import Bot
+import json
 
 # إعدادات البوت و API
 TOKEN = '8085180830:AAGHgsKIdVSFNCQ8acDiL8gaulduXauN2xk'
@@ -15,6 +16,9 @@ def get_filtered_stocks():
     try:
         res = requests.get(url, timeout=10)
         data = res.json()
+        print("📦 استجابة API الكاملة:\n")
+        print(json.dumps(data, indent=2))  # طباعة الاستجابة كاملة ومنسقة
+
         tickers = data.get("tickers", [])
         print(f"✅ جلب البيانات: {len(tickers)} سهم")
     except Exception as e:
@@ -35,11 +39,12 @@ def get_filtered_stocks():
         except ZeroDivisionError:
             continue
 
-        if 1 <= current_price <= 7 and change >= 10:
+        # شروط مخففة مؤقتًا للتجربة
+        if 0.1 <= current_price <= 100 and change >= 5:
             filtered.append((symbol, round(current_price, 2), round(change, 2)))
 
     print(f"📊 بعد الفلترة: {len(filtered)} سهم مطابق")
-    print(filtered)  # هنا نطبع النتائج لنشوفها في لوق Render
+    print(filtered)
     return filtered
 
 # المهمة الرئيسية
@@ -48,7 +53,7 @@ async def main():
         stocks = get_filtered_stocks()
         if stocks:
             await bot.send_message(chat_id=CHANNEL_ID, text=f"✅ عدد الأسهم المطابقة: {len(stocks)}")
-            for symbol, price, change in stocks[:3]:  # أول 3 أسهم فقط
+            for symbol, price, change in stocks[:3]:  # فقط أول 3
                 msg = f"🚀 سهم محتمل: {symbol}\nالسعر: {price} $\nالارتفاع: {change}%"
                 await bot.send_message(chat_id=CHANNEL_ID, text=msg)
         await asyncio.sleep(300)
