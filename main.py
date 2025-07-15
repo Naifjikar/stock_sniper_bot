@@ -54,7 +54,7 @@ async def main():
                     text=f"🚀 سهم محتمل: {symbol}\nالسعر الحالي: ${price}\nالارتفاع: {change}%"
                 )
         else:
-            await bot.send_message(chat_id=CHANNEL_ID, text="🚫 لا يوجد أسهم مطابقة حالياً.")
+    pass  # لا ترسل أي شيء إذا ما فيه أسهم
         await asyncio.sleep(300)  # كل 5 دقائق
 
 asyncio.run(main())
