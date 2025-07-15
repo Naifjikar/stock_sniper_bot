@@ -48,13 +48,8 @@ async def main():
         stocks = get_filtered_stocks()
         if stocks:
             await bot.send_message(chat_id=CHANNEL_ID, text=f"✅ عدد الأسهم المطابقة: {len(stocks)}")
-            for symbol, price, change in stocks[:3]:  # فقط أول 3 أسهم
-                await bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=f"🚀 سهم محتمل: {symbol}\nالسعر الحالي: ${price}\nالارتفاع: {change}%"
-                )
+            for symbol in stocks[:3]:  # فقط أول 3
+                await bot.send_message(chat_id=CHANNEL_ID, text=f"🚀 سهم محتمل: {symbol}")
         else:
-    pass  # لا ترسل أي شيء إذا ما فيه أسهم
+            pass  # لا ترسل أي شيء إذا ما فيه أسهم
         await asyncio.sleep(300)  # كل 5 دقائق
-
-asyncio.run(main())
