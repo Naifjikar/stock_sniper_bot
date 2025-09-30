@@ -144,7 +144,7 @@ async def start_background_tasks(app):
                     price_min=1.0,
                     price_max=10.0,
                     max_symbols=5,
-                    min_volume=5_000_000
+                    min_volume=1_000_000
                 )
             except Exception as e:
                 print(f"[{now()}] FATAL LOOP ERROR: {e}")
