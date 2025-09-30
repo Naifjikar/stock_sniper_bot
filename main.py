@@ -2,13 +2,9 @@ import os, asyncio, aiohttp, time, datetime as dt
 from telegram import Bot
 
 # ========= ENV VARS =========
-POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
-TOKEN           = os.getenv("TELEGRAM_BOT_TOKEN")
-CHANNEL_ID      = os.getenv("CHANNEL_ID")
-
-assert POLYGON_API_KEY, "❌ POLYGON_API_KEY مفقود"
-assert TOKEN, "❌ TELEGRAM_BOT_TOKEN مفقود"
-assert CHANNEL_ID, "❌ CHANNEL_ID مفقود"
+POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
+TOKEN           = os.getenv("TELEGRAM_BOT_TOKEN", "")
+CHANNEL_ID      = os.getenv("CHANNEL_ID", "")
 
 BASE = "https://api.polygon.io"
 bot  = Bot(token=TOKEN)
@@ -16,6 +12,16 @@ bot  = Bot(token=TOKEN)
 # ========= UTILS =========
 def now():
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def env_ready():
+    missing = []
+    if not POLYGON_API_KEY: missing.append("POLYGON_API_KEY")
+    if not TOKEN:           missing.append("TELEGRAM_BOT_TOKEN")
+    if not CHANNEL_ID:      missing.append("CHANNEL_ID")
+    if missing:
+        print(f"[{now()}] ⚠️ Environment missing: {', '.join(missing)}")
+        return False
+    return True
 
 async def fetch_json(session, url, params=None):
     if params is None:
@@ -37,24 +43,27 @@ def pct_from_prev(last, prev):
 async def send_telegram_message(msg: str):
     try:
         await bot.send_message(chat_id=CHANNEL_ID, text=msg)
-        await asyncio.sleep(0.5)  # تهدئة بسيطة
+        print(f"[{now()}] ✅ أُرسلت رسالة تيليجرام: {msg}")
+        await asyncio.sleep(0.5)
     except Exception as e:
-        print(f"[{now()}] خطأ في إرسال الرسالة: {e}")
+        print(f"[{now()}] خطأ إرسال تيليجرام: {e}")
 
-# ========= POLYGON (Snapshot-only) =========
+# ========= SNAPSHOT-ONLY =========
 async def get_top_gainers(session, limit=100):
     url = f"{BASE}/v2/snapshot/locale/us/markets/stocks/gainers"
     data = await fetch_json(session, url)
     tickers = data.get("tickers", []) or []
-    return [t.get("ticker") for t in tickers if t.get("ticker")][:limit]
+    symbols = [t.get("ticker") for t in tickers if t.get("ticker")]
+    print(f"[{now()}] ℹ️ عدد الـ gainers المستلمة: {len(symbols)}")
+    return symbols[:limit]
 
 async def get_last_price(session, symbol):
-    # نجيب السعر الأخير من snapshot فقط
     url = f"{BASE}/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}"
     data = await fetch_json(session, url)
     try:
         return float(data["ticker"]["lastTrade"]["p"])
     except Exception:
+        print(f"[{now()}] ⚠️ lastPrice غير متوفر لـ {symbol}")
         return None
 
 async def get_prev_close_and_prev_volume(session, symbol):
@@ -66,6 +75,7 @@ async def get_prev_close_and_prev_volume(session, symbol):
         prev_vol   = float(res.get("v") or 0)
         return prev_close, prev_vol
     except Exception:
+        print(f"[{now()}] ⚠️ prev/vol غير متوفر لـ {symbol}")
         return None, None
 
 async def get_today_volume(session, symbol):
@@ -81,7 +91,7 @@ async def run_once(
     min_pct=30.0, price_min=1.0, price_max=10.0,
     max_symbols=5, min_volume=5_000_000
 ):
-    print(f"[{now()}] تشغيل الفلتر (snapshot-only)...")
+    print(f"[{now()}] 🚀 بدء دورة فلترة جديدة...")
     sent = 0
     async with aiohttp.ClientSession() as session:
         symbols = await get_top_gainers(session, limit=100)
@@ -95,34 +105,35 @@ async def run_once(
 
             last  = await get_last_price(session, sym)
             prev, prev_vol = await get_prev_close_and_prev_volume(session, sym)
+            print(f"[{now()}] فحص {sym} -> last={last}, prev={prev}")
+
             if last is None or prev is None:
                 continue
 
-            # فلترة السعر
             if not (price_min <= last <= price_max):
                 continue
 
-            # نسبة التغير من إغلاق أمس
             change = pct_from_prev(last, prev)
             if change < min_pct:
                 continue
 
-            # تحقق من السيولة: اليوم أو أمس ≥ 5M
             today_vol = await get_today_volume(session, sym)
             if today_vol < min_volume and (prev_vol or 0) < min_volume:
                 continue
 
-            # === الإرسال: رمز فقط ===
             await send_telegram_message(sym)
-            print(f"[{now()}] تم الإرسال: {sym} ({change:.1f}%)")
+            print(f"[{now()}] ✅ تم الإرسال: {sym} ({change:.1f}%)")
             sent += 1
 
     if sent == 0:
-        print(f"[{now()}] ما وجدنا سهم يطابق الشروط")
+        print(f"[{now()}] ❌ ما وجدنا سهم يطابق الشروط")
 
 # ========= LOOP كل 3 دقائق =========
 if __name__ == "__main__":
     while True:
+        if not env_ready():
+            time.sleep(180)
+            continue
         try:
             asyncio.run(run_once(
                 min_pct=30.0,
