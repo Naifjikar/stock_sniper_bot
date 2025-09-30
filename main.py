@@ -1,5 +1,7 @@
-import os, asyncio, aiohttp, time, datetime as dt
+# main.py
+import os, asyncio, aiohttp, time, datetime as dt, contextlib
 from telegram import Bot
+from aiohttp import web
 
 # ========= ENV VARS =========
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
@@ -32,7 +34,7 @@ async def fetch_json(session, url, params=None):
             r.raise_for_status()
             return await r.json()
     except Exception as e:
-        print(f"[{now()}] fetch_json ERROR {url}: {e}")
+        print(f"[{now()}] ❌ fetch_json ERROR {url}: {e}")
         return {}
 
 def pct_from_prev(last, prev):
@@ -44,11 +46,11 @@ async def send_telegram_message(msg: str):
     try:
         await bot.send_message(chat_id=CHANNEL_ID, text=msg)
         print(f"[{now()}] ✅ أُرسلت رسالة تيليجرام: {msg}")
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.4)
     except Exception as e:
-        print(f"[{now()}] خطأ إرسال تيليجرام: {e}")
+        print(f"[{now()}] ❌ خطأ إرسال تيليجرام: {e}")
 
-# ========= SNAPSHOT-ONLY =========
+# ========= POLYGON (Snapshot-only) =========
 async def get_top_gainers(session, limit=100):
     url = f"{BASE}/v2/snapshot/locale/us/markets/stocks/gainers"
     data = await fetch_json(session, url)
@@ -86,11 +88,14 @@ async def get_today_volume(session, symbol):
     except Exception:
         return 0.0
 
-# ========= ONE RUN =========
+# ========= ONE RUN (فلترة دورة واحدة) =========
 async def run_once(
     min_pct=30.0, price_min=1.0, price_max=10.0,
     max_symbols=5, min_volume=5_000_000
 ):
+    if not env_ready():
+        return
+
     print(f"[{now()}] 🚀 بدء دورة فلترة جديدة...")
     sent = 0
     async with aiohttp.ClientSession() as session:
@@ -121,6 +126,7 @@ async def run_once(
             if today_vol < min_volume and (prev_vol or 0) < min_volume:
                 continue
 
+            # إرسال: الرمز فقط
             await send_telegram_message(sym)
             print(f"[{now()}] ✅ تم الإرسال: {sym} ({change:.1f}%)")
             sent += 1
@@ -128,20 +134,37 @@ async def run_once(
     if sent == 0:
         print(f"[{now()}] ❌ ما وجدنا سهم يطابق الشروط")
 
-# ========= LOOP كل 3 دقائق =========
+# ========= Web Service على Render + تشغيل اللوب بالخلفية =========
+async def start_background_tasks(app):
+    async def runner():
+        while True:
+            try:
+                await run_once(
+                    min_pct=30.0,
+                    price_min=1.0,
+                    price_max=10.0,
+                    max_symbols=5,
+                    min_volume=5_000_000
+                )
+            except Exception as e:
+                print(f"[{now()}] FATAL LOOP ERROR: {e}")
+            await asyncio.sleep(180)  # كل 3 دقائق
+    app['task'] = asyncio.create_task(runner())
+
+async def cleanup_background_tasks(app):
+    app['task'].cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await app['task']
+
+async def health(request):
+    return web.Response(text="OK")
+
+app = web.Application()
+app.router.add_get('/', health)
+app.on_startup.append(start_background_tasks)
+app.on_cleanup.append(cleanup_background_tasks)
+
 if __name__ == "__main__":
-    while True:
-        if not env_ready():
-            time.sleep(180)
-            continue
-        try:
-            asyncio.run(run_once(
-                min_pct=30.0,
-                price_min=1.0,
-                price_max=10.0,
-                max_symbols=5,
-                min_volume=5_000_000
-            ))
-        except Exception as e:
-            print(f"[{now()}] FATAL LOOP ERROR: {e}")
-        time.sleep(180)
+    port = int(os.getenv("PORT", "8000"))
+    print(f"[{now()}] 🌐 Running web app on port {port} (Render healthcheck) + background loop...")
+    web.run_app(app, port=port)
