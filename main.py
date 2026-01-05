@@ -1,187 +1,136 @@
-import os, time, json, requests
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
+import asyncio, requests, time, json, os
+from telegram import Bot
+from deep_translator import GoogleTranslator
 
-load_dotenv()
+# ================== CONFIG ==================
+TOKEN = "8101036051:AAEMbhWIYv22FOMV6pXcAOosEWxsy9v3jfY"
+CHANNEL = "@USMarketnow"
+POLYGON_KEY = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+PRICE_MIN, PRICE_MAX = 0.3, 10.0
+INTERVAL = 90
+STATE_FILE = "stocks_state.json"
 
-POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
+bot = Bot(token=TOKEN)
+translator = GoogleTranslator(source="auto", target="ar")
 
-MIN_PRICE = 0.01
-MAX_PRICE = 10.0
-MIN_VOLUME = 5_000_000
-MIN_CHANGE_PCT = 15
+state = json.load(open(STATE_FILE)) if os.path.exists(STATE_FILE) else {}
 
-TAKE_PROFIT_PCT = 7
-STOP_LOSS_PCT = 9
+# ================== FILTERS ==================
+STRONG_KEYWORDS = [
+    "fda", "approval", "clinical", "trial", "phase",
+    "acquisition", "merger", "agreement", "contract",
+    "earnings", "revenue", "eps", "guidance",
+    "launch", "technology", "ai", "patent"
+]
 
-EMA_PERIOD = 50
-HOURS_BACK = 24 * 5
-MAX_SIGNALS_PER_RUN = 5
+BLOCK = [
+    "lawsuit", "class action", "investigation",
+    "law firm", "shareholder"
+]
 
-STATE_FILE = "state.json"
-NO_MATCH_COOLDOWN_MIN = 60
-SIGNAL_COOLDOWN_MIN = 120  # لا تعيد نفس السهم قبل 120 دقيقة
+# ================== HELPERS ==================
+def save_state():
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
 
-def now_ts():
-    return int(time.time())
+def polygon(path, params=None):
+    params = params or {}
+    params["apiKey"] = POLYGON_KEY
+    r = requests.get("https://api.polygon.io" + path, params=params, timeout=20)
+    r.raise_for_status()
+    return r.json()
 
-def load_state():
-    if not os.path.exists(STATE_FILE):
-        return {"last_no_match_ts": 0, "last_signal_ts": {}}
+def get_price(sym):
     try:
-        return json.load(open(STATE_FILE, "r", encoding="utf-8"))
+        snap = polygon(f"/v2/snapshot/locale/us/markets/stocks/tickers/{sym}")
+        return float(snap["ticker"]["day"]["c"])
     except:
-        return {"last_no_match_ts": 0, "last_signal_ts": {}}
-
-def save_state(state):
-    json.dump(state, open(STATE_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-
-def tg_send(text: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
-    r = requests.post(url, json=payload, timeout=20)
-    r.raise_for_status()
-
-def polygon_gainers():
-    url = "https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers"
-    params = {"apiKey": POLYGON_API_KEY}
-    r = requests.get(url, params=params, timeout=25)
-    r.raise_for_status()
-    data = r.json()
-
-    out = []
-    for item in data.get("tickers", []):
-        sym = item.get("ticker")
-        last_trade = item.get("lastTrade") or {}
-        day = item.get("day") or {}
-        prev = item.get("prevDay") or {}
-
-        price = last_trade.get("p") or day.get("c")
-        vol = day.get("v")
-
-        # ✅ التغيير الصحيح
-        chg = item.get("todaysChangePerc")
-        if chg is None:
-            dc = day.get("c")
-            pc = prev.get("c")
-            if dc and pc and pc != 0:
-                chg = ((dc - pc) / pc) * 100
-
-        if price is None or vol is None or chg is None:
-            continue
-
-        price = float(price)
-        vol = int(vol)
-        chg = float(chg)
-
-        if MIN_PRICE <= price <= MAX_PRICE and vol >= MIN_VOLUME and chg >= MIN_CHANGE_PCT:
-            out.append({"symbol": sym, "price": price, "volume": vol, "change_pct": chg})
-
-    return out
-
-def get_4h_candles(symbol: str):
-    end = datetime.utcnow()
-    start = end - timedelta(hours=HOURS_BACK)
-    url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/4/hour/{start:%Y-%m-%d}/{end:%Y-%m-%d}"
-    params = {"adjusted": "true", "limit": 500, "sort": "asc", "apiKey": POLYGON_API_KEY}
-    r = requests.get(url, params=params, timeout=25)
-    r.raise_for_status()
-    return r.json().get("results", []) or []
-
-def calc_ema(closes, period):
-    if len(closes) < period:
         return None
-    sma = sum(closes[:period]) / period
-    k = 2 / (period + 1)
-    ema = sma
-    for p in closes[period:]:
-        ema = p * k + ema * (1 - k)
-    return ema
 
-def ema50_and_res(symbol: str):
-    candles = get_4h_candles(symbol)
-    if not candles:
-        return None, None
-    closes = [float(c["c"]) for c in candles]
-    highs  = [float(c["h"]) for c in candles]
+def get_levels(sym):
+    try:
+        bars = polygon(
+            f"/v2/aggs/ticker/{sym}/range/3/minute",
+            {"limit": 20}
+        )["results"]
 
-    ema50 = calc_ema(closes, EMA_PERIOD)
-    if ema50 is None:
+        highs = [b["h"] for b in bars]
+        lows = [b["l"] for b in bars]
+
+        resistance = max(highs)
+        stop = min(lows[-5:])  # آخر قاع فني
+
+        return resistance, stop
+    except:
         return None, None
 
-    lookback = min(20, len(highs))
-    resistance = max(highs[-lookback:])
-    return ema50, resistance
+# ================== MAIN LOOP ==================
+async def run():
+    while True:
+        try:
+            news = polygon("/v2/reference/news", {"limit": 50})["results"]
 
-def build_msg(stock):
-    sym = stock["symbol"]
-    cur = stock["price"]
+            for n in news:
+                uid = n["id"]
+                if uid in state:
+                    continue
 
-    ema50, res = ema50_and_res(sym)
-    if ema50 is None or res is None:
-        return None
-    if cur <= ema50:
-        return None
+                title = n["title"].lower()
+                if any(b in title for b in BLOCK):
+                    state[uid] = time.time()
+                    continue
 
-    entry = round(res, 2)
-    target = round(entry * (1 + TAKE_PROFIT_PCT/100), 2)
-    stop = round(entry * (1 - STOP_LOSS_PCT/100), 2)
+                if not any(k in title for k in STRONG_KEYWORDS):
+                    state[uid] = time.time()
+                    continue
 
-    return f"""📈 <b>سهم زخم: {sym}</b>
+                for sym in n.get("tickers", []):
+                    price = get_price(sym)
+                    if not price or not (PRICE_MIN <= price <= PRICE_MAX):
+                        continue
 
-السعر الحالي: <b>{cur:.2f}</b>
-نقطة الدخول (مقاومة): <b>{entry}</b>
+                    res, stop = get_levels(sym)
+                    if not res or not stop or stop >= res:
+                        continue
 
-🎯 الهدف: <b>{target}</b>
-🛡 الوقف: <b>{stop}</b>
+                    entry = res
+                    t1 = entry * 1.08
+                    t2 = entry * 1.15
+                    t3 = entry * 1.25
+                    t4 = entry * 1.40
 
-الشروط:
-- تغيير اليوم ≥ {MIN_CHANGE_PCT}%
-- فوليوم ≥ {MIN_VOLUME:,}
-- السعر بين {MIN_PRICE}$ و {MAX_PRICE}$
-- فوق EMA50 (4H)
+                    title_ar = translator.translate(n["title"])
+
+                    msg = f"""
+🚨 <b>{sym}</b>
+📰 {title_ar}
+
+📍 الدخول: {entry:.2f}
+⛔ الوقف: {stop:.2f}
+
+🎯 الأهداف:
+1️⃣ {t1:.2f}
+2️⃣ {t2:.2f}
+3️⃣ {t3:.2f}
+4️⃣ {t4:.2f}
 """
 
-def run_once():
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID or not POLYGON_API_KEY:
-        raise SystemExit("Missing env vars: TELEGRAM_TOKEN / TELEGRAM_CHAT_ID / POLYGON_API_KEY")
+                    await bot.send_message(
+                        chat_id=CHANNEL,
+                        text=msg,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True
+                    )
 
-    state = load_state()
-    t = now_ts()
+                    state[uid] = time.time()
+                    save_state()
+                    await asyncio.sleep(180)
+                    break
 
-    stocks = polygon_gainers()
+        except Exception as e:
+            print("ERR:", e)
 
-    if not stocks:
-        if t - int(state.get("last_no_match_ts", 0)) >= NO_MATCH_COOLDOWN_MIN * 60:
-            tg_send("لا توجد حالياً أسهم مطابقة لشروط الزخم.")
-            state["last_no_match_ts"] = t
-            save_state(state)
-        return
+        await asyncio.sleep(INTERVAL)
 
-    sent = 0
-    last_signal_ts = state.get("last_signal_ts", {})
-
-    for st in stocks:
-        if sent >= MAX_SIGNALS_PER_RUN:
-            break
-
-        sym = st["symbol"]
-        last = int(last_signal_ts.get(sym, 0))
-        if t - last < SIGNAL_COOLDOWN_MIN * 60:
-            continue
-
-        msg = build_msg(st)
-        if msg:
-            tg_send(msg)
-            last_signal_ts[sym] = t
-            sent += 1
-            time.sleep(1.2)
-
-    state["last_signal_ts"] = last_signal_ts
-    save_state(state)
-
-if __name__ == "__main__":
-    run_once()
+asyncio.run(run())
