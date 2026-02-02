@@ -1,136 +1,94 @@
-import asyncio, requests, time, json, os
-from telegram import Bot
-from deep_translator import GoogleTranslator
+import os, time, json, requests
+from datetime import datetime, timezone, timedelta
 
-# ================== CONFIG ==================
-TOKEN = "8101036051:AAEMbhWIYv22FOMV6pXcAOosEWxsy9v3jfY"
-CHANNEL = "@USMarketnow"
-POLYGON_KEY = "ht3apHm7nJA2VhvBynMHEcpRI11VSRbq"
+# ================= CONFIG =================
+TG_TOKEN = os.getenv("TG_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+FINNHUB = os.getenv("FINNHUB_KEY")
 
-PRICE_MIN, PRICE_MAX = 0.3, 10.0
-INTERVAL = 90
-STATE_FILE = "stocks_state.json"
+PRICE_MIN = 1
+PRICE_MAX = 10
+MAX_PICKS = 5
 
-bot = Bot(token=TOKEN)
-translator = GoogleTranslator(source="auto", target="ar")
+STATE_FILE = "state.json"
+KSA = timezone(timedelta(hours=3))
 
-state = json.load(open(STATE_FILE)) if os.path.exists(STATE_FILE) else {}
+# ================= HELPERS =================
+def tg_send(text):
+    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": CHAT_ID, "text": text})
 
-# ================== FILTERS ==================
-STRONG_KEYWORDS = [
-    "fda", "approval", "clinical", "trial", "phase",
-    "acquisition", "merger", "agreement", "contract",
-    "earnings", "revenue", "eps", "guidance",
-    "launch", "technology", "ai", "patent"
-]
+def load_state():
+    if os.path.exists(STATE_FILE):
+        return json.load(open(STATE_FILE))
+    return {"sent": {}, "results": {}}
 
-BLOCK = [
-    "lawsuit", "class action", "investigation",
-    "law firm", "shareholder"
-]
+def save_state(s):
+    json.dump(s, open(STATE_FILE, "w"), indent=2)
 
-# ================== HELPERS ==================
-def save_state():
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
-
-def polygon(path, params=None):
-    params = params or {}
-    params["apiKey"] = POLYGON_KEY
-    r = requests.get("https://api.polygon.io" + path, params=params, timeout=20)
-    r.raise_for_status()
+def get_quote(symbol):
+    r = requests.get(
+        "https://finnhub.io/api/v1/quote",
+        params={"symbol": symbol, "token": FINNHUB},
+        timeout=10
+    )
     return r.json()
 
-def get_price(sym):
-    try:
-        snap = polygon(f"/v2/snapshot/locale/us/markets/stocks/tickers/{sym}")
-        return float(snap["ticker"]["day"]["c"])
-    except:
-        return None
+def get_watchlist():
+    # تحط هنا قائمة مراقبة أو تجيبها من API خارجي
+    return ["SOUN","BNZI","INTZ","MULN","HOLO","TSLA"]
 
-def get_levels(sym):
-    try:
-        bars = polygon(
-            f"/v2/aggs/ticker/{sym}/range/3/minute",
-            {"limit": 20}
-        )["results"]
+# ================= MAIN =================
+state = load_state()
+today = datetime.now(KSA).strftime("%Y-%m-%d")
 
-        highs = [b["h"] for b in bars]
-        lows = [b["l"] for b in bars]
+picked_today = [s for s in state["sent"] if state["sent"][s]==today]
 
-        resistance = max(highs)
-        stop = min(lows[-5:])  # آخر قاع فني
+for symbol in get_watchlist():
+    if len(picked_today) >= MAX_PICKS:
+        break
 
-        return resistance, stop
-    except:
-        return None, None
+    if symbol in picked_today:
+        continue
 
-# ================== MAIN LOOP ==================
-async def run():
-    while True:
-        try:
-            news = polygon("/v2/reference/news", {"limit": 50})["results"]
+    q = get_quote(symbol)
+    price = q["c"]
+    prev = q["pc"]
 
-            for n in news:
-                uid = n["id"]
-                if uid in state:
-                    continue
+    if price <= 0 or prev <= 0:
+        continue
 
-                title = n["title"].lower()
-                if any(b in title for b in BLOCK):
-                    state[uid] = time.time()
-                    continue
+    change = ((price - prev) / prev) * 100
 
-                if not any(k in title for k in STRONG_KEYWORDS):
-                    state[uid] = time.time()
-                    continue
+    if not (PRICE_MIN <= price <= PRICE_MAX):
+        continue
 
-                for sym in n.get("tickers", []):
-                    price = get_price(sym)
-                    if not price or not (PRICE_MIN <= price <= PRICE_MAX):
-                        continue
+    if change < 8:
+        continue
 
-                    res, stop = get_levels(sym)
-                    if not res or not stop or stop >= res:
-                        continue
+    entry = round(price, 2)
+    stop = round(entry * 0.91, 2)
 
-                    entry = res
-                    t1 = entry * 1.08
-                    t2 = entry * 1.15
-                    t3 = entry * 1.25
-                    t4 = entry * 1.40
+    targets = [
+        round(entry * 1.08, 2),
+        round(entry * 1.15, 2),
+        round(entry * 1.25, 2),
+        round(entry * 1.40, 2),
+    ]
 
-                    title_ar = translator.translate(n["title"])
+    msg = f"""
+{symbol}
+دخول: {entry}
+وقف: {stop}
+الأهداف:
+{targets[0]} - {targets[1]} - {targets[2]} - {targets[3]}
+""".strip()
 
-                    msg = f"""
-🚨 <b>{sym}</b>
-📰 {title_ar}
+    tg_send(msg)
 
-📍 الدخول: {entry:.2f}
-⛔ الوقف: {stop:.2f}
+    state["sent"][symbol] = today
+    state["results"][symbol] = {"entry": entry, "high": entry}
+    picked_today.append(symbol)
+    save_state(state)
 
-🎯 الأهداف:
-1️⃣ {t1:.2f}
-2️⃣ {t2:.2f}
-3️⃣ {t3:.2f}
-4️⃣ {t4:.2f}
-"""
-
-                    await bot.send_message(
-                        chat_id=CHANNEL,
-                        text=msg,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True
-                    )
-
-                    state[uid] = time.time()
-                    save_state()
-                    await asyncio.sleep(180)
-                    break
-
-        except Exception as e:
-            print("ERR:", e)
-
-        await asyncio.sleep(INTERVAL)
-
-asyncio.run(run())
+    time.sleep(2)
