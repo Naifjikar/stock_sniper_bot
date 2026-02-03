@@ -1,31 +1,11 @@
-import os, time, hashlib, sqlite3, logging
-from datetime import datetime, timezone, date
+import os, time, json, hashlib, sqlite3, logging
+from datetime import date
 import requests
 
 # ===== ENV =====
 TG_TOKEN = (os.getenv("TG_TOKEN") or "").strip()
 TG_CHAT_ID = (os.getenv("TG_CHAT_ID") or "").strip()
-
-POLYGON_API_KEY = (os.getenv("POLYGON_API_KEY") or "").strip()
 FINNHUB_API_KEY = (os.getenv("FINNHUB_API_KEY") or "").strip()
-
-# ===== SETTINGS =====
-PRICE_MIN = 1.0
-PRICE_MAX = 10.0
-
-MIN_DAY_VOLUME = 300_000     # ✅ طلبك
-MIN_DAY_CHANGE_PCT = 10.0    # زخم حقيقي
-
-POLL_SECONDS = 60            # كل دقيقة
-CANDLE_RES_MIN = 3           # 3 minutes
-LOOKBACK_BARS = 200
-
-STOP_PCT = 0.09              # -9%
-TARGET_PCTS = [0.08, 0.15, 0.25, 0.40]  # +8% +15% +25% +40%
-
-MAX_SIGNALS_PER_DAY = 5      # تقدر تخليها 999 لو تبي “مفتوح”
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 def req(name, val):
     if not val:
@@ -33,23 +13,37 @@ def req(name, val):
 
 req("TG_TOKEN", TG_TOKEN)
 req("TG_CHAT_ID", TG_CHAT_ID)
-req("POLYGON_API_KEY", POLYGON_API_KEY)
 req("FINNHUB_API_KEY", FINNHUB_API_KEY)
 
-# ===== DB (dedup + daily limit) =====
+# ===== SETTINGS =====
+PRICE_MIN = 1.0
+PRICE_MAX = 10.0
+
+MIN_DAY_CHANGE_PCT = 10.0     # زخم
+MIN_DAY_VOLUME = 300_000      # طلبك
+
+POLL_SECONDS = 60
+CANDLE_RES_MIN = 3
+LOOKBACK_BARS = 200
+
+STOP_PCT = 0.09
+TARGET_PCTS = [0.08, 0.15, 0.25, 0.40]
+
+MAX_SIGNALS_PER_DAY = 5
+
+# عدد الأسهم اللي نمسحها كل دورة (مهم عشان حدود Finnhub)
+BATCH_SIZE = 25   # 25 سهم/دقيقة تقريباً (مناسب للحدود)
+SLEEP_BETWEEN_CALLS = 0.2
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+# ===== DB =====
 con = sqlite3.connect("seen.db")
 cur = con.cursor()
 cur.execute("CREATE TABLE IF NOT EXISTS seen (k TEXT PRIMARY KEY, ts INTEGER)")
 cur.execute("CREATE TABLE IF NOT EXISTS daily (d TEXT PRIMARY KEY, n INTEGER)")
+cur.execute("CREATE TABLE IF NOT EXISTS cursor (k TEXT PRIMARY KEY, v INTEGER)")
 con.commit()
-
-def seen_before(key: str) -> bool:
-    cur.execute("SELECT 1 FROM seen WHERE k=?", (key,))
-    return cur.fetchone() is not None
-
-def mark_seen(key: str):
-    cur.execute("INSERT OR REPLACE INTO seen (k, ts) VALUES (?,?)", (key, int(time.time())))
-    con.commit()
 
 def today_key() -> str:
     return date.today().isoformat()
@@ -66,107 +60,124 @@ def inc_today_count():
     cur.execute("INSERT OR REPLACE INTO daily (d, n) VALUES (?, ?)", (d, n))
     con.commit()
 
+def seen_before(key: str) -> bool:
+    cur.execute("SELECT 1 FROM seen WHERE k=?", (key,))
+    return cur.fetchone() is not None
+
+def mark_seen(key: str):
+    cur.execute("INSERT OR REPLACE INTO seen (k, ts) VALUES (?,?)", (key, int(time.time())))
+    con.commit()
+
+def get_cursor() -> int:
+    cur.execute("SELECT v FROM cursor WHERE k='i'")
+    row = cur.fetchone()
+    return int(row[0]) if row else 0
+
+def set_cursor(v: int):
+    cur.execute("INSERT OR REPLACE INTO cursor (k, v) VALUES ('i', ?)", (int(v),))
+    con.commit()
+
 # ===== Telegram =====
 def tg_send(text: str):
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     payload = {"chat_id": TG_CHAT_ID, "text": text, "disable_web_page_preview": True}
-    r = requests.post(url, json=payload, timeout=20)
-
-    # Rate limit handling
-    if r.status_code == 429:
-        try:
-            wait = r.json().get("parameters", {}).get("retry_after", 5)
-        except Exception:
-            wait = 5
-        time.sleep(wait + 1)
-        return tg_send(text)
-
-    # Don't crash the bot; log the reason
-    if not r.ok:
-        logging.error("TG ERROR %s %s", r.status_code, r.text)
-        return
-
-# ===== Polygon helpers (Scanner) =====
-def polygon_get(path: str, params: dict | None = None):
-    params = dict(params or {})
-    params["apiKey"] = POLYGON_API_KEY
-    url = f"https://api.polygon.io/{path}"
-    r = requests.get(url, params=params, timeout=20)
-    r.raise_for_status()
-    return r.json()
-
-def fetch_momentum_candidates(limit: int = 50):
-    """
-    Uses Polygon snapshot gainers to get real-time momentum candidates.
-    We filter later by price/volume/change.
-    """
-    data = polygon_get("v2/snapshot/locale/us/markets/stocks/gainers", {"limit": limit})
-    tickers = data.get("tickers") or []
-    return tickers
-
-def extract_metrics_from_polygon(t) -> tuple[str, float, float, float] | None:
-    """
-    Returns: (symbol, last_price, day_volume, day_change_pct)
-    """
-    sym = (t.get("ticker") or "").strip()
-    if not sym:
-        return None
-
-    # last price
-    last = None
-    if t.get("lastTrade") and isinstance(t["lastTrade"], dict):
-        last = t["lastTrade"].get("p")
-    if not last and t.get("min") and isinstance(t["min"], dict):
-        last = t["min"].get("c")
-    if not last and t.get("day") and isinstance(t["day"], dict):
-        last = t["day"].get("c")
-
-    # day volume
-    day_v = None
-    if t.get("day") and isinstance(t["day"], dict):
-        day_v = t["day"].get("v")
-
-    # day change %
-    chg_pct = None
-    if t.get("todaysChangePerc") is not None:
-        chg_pct = float(t["todaysChangePerc"])
-    elif t.get("todaysChangePerc") is None and t.get("todaysChange") is not None:
-        # fallback if percent missing (rare)
-        pass
-
     try:
-        last = float(last) if last is not None else None
-        day_v = float(day_v) if day_v is not None else 0.0
-        chg_pct = float(chg_pct) if chg_pct is not None else None
-    except Exception:
-        return None
+        r = requests.post(url, json=payload, timeout=20)
+        if r.status_code == 429:
+            try:
+                wait = r.json().get("parameters", {}).get("retry_after", 5)
+            except Exception:
+                wait = 5
+            time.sleep(wait + 1)
+            return tg_send(text)
+        if not r.ok:
+            logging.error("TG ERROR %s %s", r.status_code, r.text)
+    except Exception as e:
+        logging.error("TG SEND FAILED: %s", e)
 
-    if last is None or chg_pct is None:
-        return None
-
-    return sym, last, day_v, chg_pct
-
-# ===== Finnhub helpers (3m candles for resistance) =====
+# ===== Finnhub =====
 def finnhub_get(path: str, params: dict):
     params = dict(params)
     params["token"] = FINNHUB_API_KEY
     url = f"https://finnhub.io/api/v1/{path}"
     r = requests.get(url, params=params, timeout=20)
+    if r.status_code == 429:
+        time.sleep(1.2)
+        return finnhub_get(path, params)
     r.raise_for_status()
     return r.json()
+
+def load_universe() -> list[str]:
+    """
+    نحمل قائمة الأسهم مرة وحدة ونحفظها في ملف لتسريع التشغيل.
+    """
+    cache_file = "symbols.json"
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r") as f:
+                syms = json.load(f)
+            if isinstance(syms, list) and len(syms) > 1000:
+                return syms
+        except Exception:
+            pass
+
+    # Finnhub symbol list
+    # بعض الحسابات تنجح مع exchange=US، لو ما نجحت نجرب NASDAQ/NYSE/AMEX
+    exchanges = ["US", "NASDAQ", "NYSE", "AMEX"]
+    all_syms = []
+
+    for ex in exchanges:
+        try:
+            rows = finnhub_get("stock/symbol", {"exchange": ex})
+            if isinstance(rows, list) and rows:
+                for it in rows:
+                    s = (it.get("symbol") or "").strip().upper()
+                    # فلترة رموز نظيفة (بدون . وبدون -)
+                    if 1 <= len(s) <= 5 and s.isalpha():
+                        all_syms.append(s)
+                if len(all_syms) > 2000:
+                    break
+        except Exception as e:
+            logging.warning("Universe fetch failed for %s: %s", ex, e)
+
+    # إزالة تكرارات
+    syms = sorted(list(set(all_syms)))
+
+    with open(cache_file, "w") as f:
+        json.dump(syms, f)
+
+    return syms
+
+def get_quote(symbol: str) -> tuple[float, float, float] | None:
+    """
+    returns: (current_price, prev_close, change_pct)
+    """
+    try:
+        q = finnhub_get("quote", {"symbol": symbol})
+        c = float(q.get("c") or 0)
+        pc = float(q.get("pc") or 0)
+        if c <= 0 or pc <= 0:
+            return None
+        chg_pct = (c - pc) / pc * 100.0
+        return c, pc, chg_pct
+    except Exception:
+        return None
 
 def get_candles_3m(symbol: str):
     now = int(time.time())
     frm = now - (CANDLE_RES_MIN * 60 * LOOKBACK_BARS)
-    data = finnhub_get("stock/candle", {
-        "symbol": symbol,
-        "resolution": str(CANDLE_RES_MIN),
-        "from": frm,
-        "to": now
-    })
-    if data.get("s") != "ok":
+    try:
+        data = finnhub_get("stock/candle", {
+            "symbol": symbol,
+            "resolution": str(CANDLE_RES_MIN),
+            "from": frm,
+            "to": now
+        })
+        if data.get("s") != "ok":
+            return None
+        return data
+    except Exception:
         return None
-    return data
 
 def pivot_highs(highs, left=2, right=2):
     pivots = []
@@ -176,19 +187,22 @@ def pivot_highs(highs, left=2, right=2):
             pivots.append(h)
     return pivots
 
-def nearest_resistance(symbol: str, last_price: float) -> float | None:
-    candles = get_candles_3m(symbol)
-    if not candles:
+def nearest_resistance_from_candles(candles, last_price: float) -> float | None:
+    highs = candles.get("h") or []
+    if not highs:
         return None
-    highs = candles["h"]
     pivs = pivot_highs(highs, 2, 2)
     above = sorted([p for p in pivs if p > last_price])
     if above:
         return float(above[0])
-    # fallback: recent max high
-    if len(highs) >= 50:
-        return float(max(highs[-50:]))
-    return float(max(highs)) if highs else None
+    # fallback
+    tail = highs[-50:] if len(highs) >= 50 else highs
+    return float(max(tail)) if tail else None
+
+def approx_day_volume_from_candles(candles) -> float:
+    # حجم تقريبي من مجموع فوليوم شموع 3 دقائق في نافذة LOOKBACK_BARS
+    vols = candles.get("v") or []
+    return float(sum(vols)) if vols else 0.0
 
 def build_levels(entry: float):
     stop = round(entry * (1 - STOP_PCT), 4)
@@ -196,47 +210,62 @@ def build_levels(entry: float):
     return stop, targets
 
 def main_loop():
-    # startup message (won't crash if Telegram fails)
-    try:
-        tg_send("✅ بوت الزخم شغال (بدون أخبار)")
-    except Exception:
-        pass
+    syms = load_universe()
+    if not syms:
+        raise RuntimeError("Universe is empty. Finnhub stock/symbol failed.")
+
+    tg_send("✅ بوت الزخم شغال (Finnhub فقط - بدون أخبار)")
 
     while True:
         try:
-            logging.info("Heartbeat... daily_sent=%s", get_today_count())
+            sent = get_today_count()
+            logging.info("Heartbeat... daily_sent=%s universe=%s", sent, len(syms))
 
-            # Stop if daily limit reached
-            if get_today_count() >= MAX_SIGNALS_PER_DAY:
-                logging.info("Daily limit reached (%s). Sleeping...", MAX_SIGNALS_PER_DAY)
+            if sent >= MAX_SIGNALS_PER_DAY:
                 time.sleep(POLL_SECONDS)
                 continue
 
-            candidates = fetch_momentum_candidates(limit=60)
+            i = get_cursor()
+            batch = []
+            for _ in range(BATCH_SIZE):
+                batch.append(syms[i % len(syms)])
+                i += 1
+            set_cursor(i)
 
-            for t in candidates:
-                m = extract_metrics_from_polygon(t)
-                if not m:
+            for sym in batch:
+                if get_today_count() >= MAX_SIGNALS_PER_DAY:
+                    break
+
+                # Dedup per symbol/day
+                day = today_key()
+                k = hashlib.sha1(f"{day}|{sym}".encode("utf-8")).hexdigest()
+                if seen_before(k):
                     continue
-                sym, last_price, day_vol, chg_pct = m
 
-                # Filters
+                q = get_quote(sym)
+                time.sleep(SLEEP_BETWEEN_CALLS)
+                if not q:
+                    continue
+                last_price, prev_close, chg_pct = q
+
                 if not (PRICE_MIN <= last_price <= PRICE_MAX):
-                    continue
-                if day_vol < MIN_DAY_VOLUME:
                     continue
                 if chg_pct < MIN_DAY_CHANGE_PCT:
                     continue
 
-                # Dedup per symbol + day (so it doesn't spam same ticker)
-                day = today_key()
-                dedup_key = hashlib.sha1(f"{day}|{sym}".encode("utf-8")).hexdigest()
-                if seen_before(dedup_key):
+                candles = get_candles_3m(sym)
+                time.sleep(SLEEP_BETWEEN_CALLS)
+                if not candles:
                     continue
 
-                res = nearest_resistance(sym, last_price)
+                day_vol = approx_day_volume_from_candles(candles)
+                if day_vol < MIN_DAY_VOLUME:
+                    mark_seen(k)
+                    continue
+
+                res = nearest_resistance_from_candles(candles, last_price)
                 if not res:
-                    mark_seen(dedup_key)
+                    mark_seen(k)
                     continue
 
                 entry = round(res, 4)
@@ -251,13 +280,8 @@ def main_loop():
                 )
 
                 tg_send(msg)
-                mark_seen(dedup_key)
+                mark_seen(k)
                 inc_today_count()
-
-                # stop if reached limit
-                if get_today_count() >= MAX_SIGNALS_PER_DAY:
-                    break
-
                 time.sleep(2)
 
         except Exception as e:
