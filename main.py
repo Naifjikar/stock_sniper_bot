@@ -89,10 +89,9 @@ def tg_send(text: str):
 
 # ===== Massive/Polygon =====
 def massive_get(path: str, params: dict | None = None):
-    params = dict(params or {})
-    params["apiKey"] = MASSIVE_API_KEY
     url = f"{API_BASE}{path}"
-    r = requests.get(url, params=params, timeout=25)
+    headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"}
+    r = requests.get(url, params=params or {}, headers=headers, timeout=25)
     if r.status_code == 429:
         time.sleep(1.2)
         return massive_get(path, params)
@@ -104,34 +103,29 @@ def get_top_gainers(limit: int = 20) -> list[dict]:
     Top market movers (gainers). Endpoint returns top 20 by default.
     """
     data = massive_get("/v2/snapshot/locale/us/markets/stocks/gainers", {})
-    # Structure usually has "tickers": [...]
     tickers = data.get("tickers") or []
     return tickers[:limit]
 
 def get_aggs_3m(symbol: str):
     """
     3-min aggregates for LOOKBACK_BARS
-    Polygon/Massive aggs use timestamps; safest to use millisecond epoch.
     """
     now = datetime.now(timezone.utc)
     frm = now - timedelta(minutes=CANDLE_RES_MIN * LOOKBACK_BARS)
-    # Polygon expects YYYY-MM-DD or millisecond epoch in path; epoch-ms is reliable
     to_ms = int(now.timestamp() * 1000)
     from_ms = int(frm.timestamp() * 1000)
 
     path = f"/v2/aggs/ticker/{symbol}/range/{CANDLE_RES_MIN}/minute/{from_ms}/{to_ms}"
-    # limit helps, adjusted=false keeps raw
     data = massive_get(path, {"adjusted": "false", "sort": "asc", "limit": 50000})
     results = data.get("results") or []
-    if not results:
-        return None
-    return results
+    return results if results else None
 
 def pivot_highs(highs, left=2, right=2):
     pivots = []
     for i in range(left, len(highs) - right):
         h = highs[i]
-        if all(h > highs[i - j] for j in range(1, left + 1)) and all(h >= highs[i + j] for j in range(1, right + 1)):
+        if all(h > highs[i - j] for j in range(1, left + 1)) and \
+           all(h >= highs[i + j] for j in range(1, right + 1)):
             pivots.append(h)
     return pivots
 
@@ -153,15 +147,6 @@ def build_levels(entry: float):
     return stop, targets
 
 def snapshot_fields(t: dict):
-    """
-    Normalize fields from snapshot ticker item.
-    Common fields:
-      - ticker: "AAPL"
-      - day: { o,h,l,c,v }
-      - prevDay: { c }
-      - todaysChangePerc (or similar)
-      - lastTrade / lastQuote etc (optional)
-    """
     sym = (t.get("ticker") or "").strip().upper()
     day = t.get("day") or {}
     prev = t.get("prevDay") or {}
@@ -170,7 +155,6 @@ def snapshot_fields(t: dict):
     day_vol = float(day.get("v") or 0)
     prev_close = float(prev.get("c") or 0)
 
-    # polygon often includes todaysChangePerc
     chg_pct = t.get("todaysChangePerc")
     if chg_pct is None and last_price > 0 and prev_close > 0:
         chg_pct = (last_price - prev_close) / prev_close * 100.0
@@ -204,13 +188,10 @@ def main_loop():
                 if not sym or last_price <= 0:
                     continue
 
-                # Dedup per symbol/day
-                day = today_key()
-                k = hashlib.sha1(f"{day}|{sym}".encode("utf-8")).hexdigest()
+                k = hashlib.sha1(f"{today_key()}|{sym}".encode("utf-8")).hexdigest()
                 if seen_before(k):
                     continue
 
-                # filters
                 if not (PRICE_MIN <= last_price <= PRICE_MAX):
                     mark_seen(k)
                     continue
