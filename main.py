@@ -1,11 +1,13 @@
-import os, time, json, hashlib, sqlite3, logging
+import os, time, json, hashlib, sqlite3, logging, re
 from datetime import datetime, timezone, date, timedelta
 import requests
 
 # ===== ENV =====
 TG_TOKEN = (os.getenv("TG_TOKEN") or "").strip()
 TG_CHAT_ID = (os.getenv("TG_CHAT_ID") or "").strip()
-MASSIVE_API_KEY = (os.getenv("MASSIVE_API_KEY") or "").strip()
+
+# تنظيف أي أحرف خفية (مثل \u200f) من المفتاح
+MASSIVE_API_KEY = re.sub(r"[^\x20-\x7E]", "", (os.getenv("MASSIVE_API_KEY") or "")).strip()
 
 def req(name, val):
     if not val:
@@ -30,7 +32,6 @@ STOP_PCT = 0.09
 TARGET_PCTS = [0.08, 0.15, 0.25, 0.40]
 
 MAX_SIGNALS_PER_DAY = 5
-
 SLEEP_BETWEEN_CALLS = 0.2
 
 # اختر واحد:
@@ -92,24 +93,20 @@ def massive_get(path: str, params: dict | None = None):
     url = f"{API_BASE}{path}"
     headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"}
     r = requests.get(url, params=params or {}, headers=headers, timeout=25)
+
     if r.status_code == 429:
         time.sleep(1.2)
         return massive_get(path, params)
+
     r.raise_for_status()
     return r.json()
 
 def get_top_gainers(limit: int = 20) -> list[dict]:
-    """
-    Top market movers (gainers). Endpoint returns top 20 by default.
-    """
     data = massive_get("/v2/snapshot/locale/us/markets/stocks/gainers", {})
     tickers = data.get("tickers") or []
     return tickers[:limit]
 
 def get_aggs_3m(symbol: str):
-    """
-    3-min aggregates for LOOKBACK_BARS
-    """
     now = datetime.now(timezone.utc)
     frm = now - timedelta(minutes=CANDLE_RES_MIN * LOOKBACK_BARS)
     to_ms = int(now.timestamp() * 1000)
@@ -168,6 +165,7 @@ def snapshot_fields(t: dict):
 
 def main_loop():
     tg_send("✅ بوت الزخم شغال (Massive/Polygon - بدون أخبار)")
+    logging.info("MASSIVE_API_KEY len=%d", len(MASSIVE_API_KEY))  # للتأكد (المفروض 32)
 
     while True:
         try:
@@ -193,25 +191,20 @@ def main_loop():
                     continue
 
                 if not (PRICE_MIN <= last_price <= PRICE_MAX):
-                    mark_seen(k)
-                    continue
+                    mark_seen(k); continue
                 if chg_pct < MIN_DAY_CHANGE_PCT:
-                    mark_seen(k)
-                    continue
+                    mark_seen(k); continue
                 if day_vol < MIN_DAY_VOLUME:
-                    mark_seen(k)
-                    continue
+                    mark_seen(k); continue
 
                 aggs = get_aggs_3m(sym)
                 time.sleep(SLEEP_BETWEEN_CALLS)
                 if not aggs:
-                    mark_seen(k)
-                    continue
+                    mark_seen(k); continue
 
                 res = nearest_resistance_from_aggs(aggs, last_price)
                 if not res:
-                    mark_seen(k)
-                    continue
+                    mark_seen(k); continue
 
                 entry = round(res, 4)
                 stop, targets = build_levels(entry)
