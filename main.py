@@ -1,16 +1,17 @@
-import os, time, json, hashlib, sqlite3, logging, re
+import os, time, hashlib, sqlite3, logging, re
 from datetime import datetime, timezone, date, timedelta
 from zoneinfo import ZoneInfo
 import requests
 
-# ===== ENV =====
+# =========================
+# ENV
+# =========================
 TG_TOKEN = (os.getenv("TG_TOKEN") or "").strip()
 TG_CHAT_ID = (os.getenv("TG_CHAT_ID") or "").strip()
 
-# قناة تنبيه الهدف الأول (اختياري). إذا ما حطيته بيستخدم نفس قناة TG_CHAT_ID
+# قناة تنبيه الهدف الأول (اختياري). إذا ما حطيته بيرسل لنفس TG_CHAT_ID
 TG_ALERT_CHAT_ID = (os.getenv("TG_ALERT_CHAT_ID") or "").strip()
 
-# تنظيف أي أحرف خفية من المفتاح
 MASSIVE_API_KEY = re.sub(r"[^\x20-\x7E]", "", (os.getenv("MASSIVE_API_KEY") or "")).strip()
 
 def req(name, val):
@@ -21,49 +22,60 @@ req("TG_TOKEN", TG_TOKEN)
 req("TG_CHAT_ID", TG_CHAT_ID)
 req("MASSIVE_API_KEY", MASSIVE_API_KEY)
 
-# ===== SETTINGS =====
+# =========================
+# SETTINGS
+# =========================
+RIYADH_TZ = ZoneInfo("Asia/Riyadh")
+
+# وقت التشغيل (الرياض)
+RUN_START_HOUR = 12   # 12:00
+RUN_END_HOUR   = 24   # 24:00
+
+# منع الويكند (السبت/الأحد)
+BLOCK_WEEKEND = True
+
+# فلترة السعر
 PRICE_MIN = 1.0
 PRICE_MAX = 10.0
 
+# شروط الزخم الأساسية (بدون عرضها بالرسالة)
 MIN_DAY_CHANGE_PCT = 10.0
 MIN_DAY_VOLUME = 300_000
 
-# وقت التشغيل: من 12 الظهر إلى 12 الليل (توقيت الرياض)
-RIYADH_TZ = ZoneInfo("Asia/Riyadh")
-RUN_START_HOUR = 12   # 12:00
-RUN_END_HOUR   = 24   # 24:00 (نعتبرها نهاية اليوم)
+# إرسال أسرع (عشان ما يتأخر)
+POLL_SECONDS = 20
 
-# إرسال فوري بدون دفعات + فاصل بين التوصيات
-POLL_SECONDS = 60
-MIN_MINUTES_BETWEEN_SIGNALS = 15
+# لا يرسل دفعة وحدة: فاصل بسيط بين التوصيات
+MIN_MINUTES_BETWEEN_SIGNALS = 5
 
-# نجيب مقاومة من فاصل 10 دقائق
-CANDLE_RES_MIN = 10
-LOOKBACK_BARS = 180  # 180 شمعة × 10د = 30 ساعة تقريبًا (كفاية)
+# المقاومة على 3 دقائق
+CANDLE_RES_MIN = 3
+LOOKBACK_BARS = 220  # 220×3د ≈ 11 ساعة (كفاية لقراءة مقاومات قريبة)
 
-# الوقف والهدف الأول حسب طلبك
+# إدارة الصفقة (حسب طلبك)
 STOP_PCT = 0.08
-TARGET1_PCT = 0.07
-# نخلي 3 أهداف (عمودي 1/2/3)
-TARGET_PCTS = [0.07, 0.15, 0.25]
+TARGET_PCTS = [0.07, 0.15, 0.25]  # 1/2/3
+
+# Upper VWAP (العلوي)
+UPPER_VWAP_PCT = 0.005  # 0.5% فوق VWAP (تقدر تخليه 0.01 = 1%)
+
+# الدخول لازم يكون قريب (حتى ما يجيك متأخر)
+MAX_ENTRY_DISTANCE_PCT = 0.02  # 2%
 
 MAX_SIGNALS_PER_DAY = 4
 SLEEP_BETWEEN_CALLS = 0.25
 
-# شرط مهم لتجنب “زخم متأخر”: الدخول لازم يكون قريب من السعر الحالي
-# مثال: لا نرسل إذا الدخول أعلى من السعر بأكثر من 5%
-MAX_ENTRY_DISTANCE_PCT = 0.05
-
-# تنبيه تحقق الهدف الأول؟
+# تنبيه الهدف الأول؟
 ALERT_ON_TARGET1 = True
 
-# API
-API_BASE = "https://api.massive.com"   # الرسمي الجديد
-# API_BASE = "https://api.polygon.io"  # شغال برضو
+API_BASE = "https://api.massive.com"
+# API_BASE = "https://api.polygon.io"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-# ===== DB =====
+# =========================
+# DB
+# =========================
 con = sqlite3.connect("seen.db")
 cur = con.cursor()
 cur.execute("CREATE TABLE IF NOT EXISTS seen (k TEXT PRIMARY KEY, ts INTEGER)")
@@ -83,17 +95,18 @@ CREATE TABLE IF NOT EXISTS signals (
 """)
 con.commit()
 
-def today_key() -> str:
-    # نثبت اليوم على توقيت الرياض
-    return datetime.now(RIYADH_TZ).date().isoformat()
-
 def now_riyadh():
     return datetime.now(RIYADH_TZ)
 
+def today_key() -> str:
+    return now_riyadh().date().isoformat()
+
+def is_weekend_riyadh() -> bool:
+    # weekday: Mon=0 ... Sat=5 Sun=6
+    return now_riyadh().weekday() >= 5
+
 def in_run_window() -> bool:
-    t = now_riyadh()
-    h = t.hour
-    # من 12 إلى 24
+    h = now_riyadh().hour
     return (h >= RUN_START_HOUR) and (h < RUN_END_HOUR)
 
 def get_today_count() -> int:
@@ -129,7 +142,9 @@ def mark_seen(key: str):
     cur.execute("INSERT OR REPLACE INTO seen (k, ts) VALUES (?,?)", (key, int(time.time())))
     con.commit()
 
-# ===== Telegram =====
+# =========================
+# Telegram
+# =========================
 def tg_send(text: str, chat_id: str | None = None):
     chat_id = chat_id or TG_CHAT_ID
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
@@ -137,10 +152,11 @@ def tg_send(text: str, chat_id: str | None = None):
     try:
         r = requests.post(url, json=payload, timeout=20)
         if r.status_code == 429:
+            wait = 5
             try:
                 wait = r.json().get("parameters", {}).get("retry_after", 5)
             except Exception:
-                wait = 5
+                pass
             time.sleep(wait + 1)
             return tg_send(text, chat_id=chat_id)
         if not r.ok:
@@ -148,7 +164,9 @@ def tg_send(text: str, chat_id: str | None = None):
     except Exception as e:
         logging.error("TG SEND FAILED: %s", e)
 
-# ===== Massive/Polygon =====
+# =========================
+# Massive/Polygon
+# =========================
 def massive_get(path: str, params: dict | None = None):
     url = f"{API_BASE}{path}"
     headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"}
@@ -161,7 +179,7 @@ def massive_get(path: str, params: dict | None = None):
     r.raise_for_status()
     return r.json()
 
-def get_top_gainers(limit: int = 30) -> list[dict]:
+def get_top_gainers(limit: int = 35) -> list[dict]:
     data = massive_get("/v2/snapshot/locale/us/markets/stocks/gainers", {})
     tickers = data.get("tickers") or []
     return tickers[:limit]
@@ -178,13 +196,46 @@ def get_aggs(symbol: str):
     return results if results else None
 
 def get_snapshot_ticker(symbol: str) -> dict | None:
-    # Snapshot لتحديث السعر ومتابعة الهدف الأول
+    # لمتابعة الهدف الأول
     path = f"/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}"
     try:
         return massive_get(path, {})
     except Exception as e:
         logging.warning("snapshot ticker failed %s: %s", symbol, e)
         return None
+
+def snapshot_fields(t: dict):
+    sym = (t.get("ticker") or "").strip().upper()
+    day = t.get("day") or {}
+    prev = t.get("prevDay") or {}
+
+    last_price = float(day.get("c") or 0)
+    day_vol = float(day.get("v") or 0)
+    prev_close = float(prev.get("c") or 0)
+
+    chg_pct = t.get("todaysChangePerc")
+    if chg_pct is None and last_price > 0 and prev_close > 0:
+        chg_pct = (last_price - prev_close) / prev_close * 100.0
+
+    try:
+        chg_pct = float(chg_pct or 0)
+    except Exception:
+        chg_pct = 0.0
+
+    return sym, last_price, prev_close, chg_pct, day_vol
+
+# =========================
+# Logic helpers
+# =========================
+def r2(x: float) -> float:
+    return round(float(x), 2)
+
+def can_send_now() -> bool:
+    last_ts = get_last_send_ts()
+    if not last_ts:
+        return True
+    mins = (time.time() - last_ts) / 60.0
+    return mins >= MIN_MINUTES_BETWEEN_SIGNALS
 
 def pivot_highs(highs, left=2, right=2):
     pivots = []
@@ -209,9 +260,17 @@ def nearest_resistance_from_aggs(aggs, last_price: float) -> float | None:
     tail = highs[-40:] if len(highs) >= 40 else highs
     return float(max(tail)) if tail else None
 
-def r2(x: float) -> float:
-    # رقمين بعد الفاصلة فقط
-    return round(float(x), 2)
+def calc_vwap(aggs, window=60):
+    xs = aggs[-window:] if len(aggs) >= window else aggs
+    pv = 0.0
+    vv = 0.0
+    for a in xs:
+        c = float(a.get("c") or 0)
+        v = float(a.get("v") or 0)
+        if c > 0 and v > 0:
+            pv += c * v
+            vv += v
+    return (pv / vv) if vv > 0 else None
 
 def build_levels(entry: float):
     stop = r2(entry * (1 - STOP_PCT))
@@ -220,37 +279,11 @@ def build_levels(entry: float):
     t3 = r2(entry * (1 + TARGET_PCTS[2]))
     return stop, (t1, t2, t3)
 
-def snapshot_fields(t: dict):
-    sym = (t.get("ticker") or "").strip().upper()
-    day = t.get("day") or {}
-    prev = t.get("prevDay") or {}
-
-    last_price = float(day.get("c") or 0)
-    day_vol = float(day.get("v") or 0)
-    prev_close = float(prev.get("c") or 0)
-
-    chg_pct = t.get("todaysChangePerc")
-    if chg_pct is None and last_price > 0 and prev_close > 0:
-        chg_pct = (last_price - prev_close) / prev_close * 100.0
-
-    try:
-        chg_pct = float(chg_pct or 0)
-    except Exception:
-        chg_pct = 0.0
-
-    return sym, last_price, prev_close, chg_pct, day_vol
-
-def can_send_now() -> bool:
-    last_ts = get_last_send_ts()
-    if not last_ts:
-        return True
-    mins = (time.time() - last_ts) / 60.0
-    return mins >= MIN_MINUTES_BETWEEN_SIGNALS
-
 def save_signal(sym: str, entry: float, stop: float, t1: float, t2: float, t3: float):
     d = today_key()
     cur.execute(
-        "INSERT OR REPLACE INTO signals (d, sym, entry, stop, t1, t2, t3, hit1) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT hit1 FROM signals WHERE d=? AND sym=?),0))",
+        "INSERT OR REPLACE INTO signals (d, sym, entry, stop, t1, t2, t3, hit1) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT hit1 FROM signals WHERE d=? AND sym=?),0))",
         (d, sym, entry, stop, t1, t2, t3, d, sym)
     )
     con.commit()
@@ -284,23 +317,32 @@ def check_target1_hits():
             tg_send(msg, chat_id=(TG_ALERT_CHAT_ID or TG_CHAT_ID))
             mark_hit1(sym)
 
+# =========================
+# Main
+# =========================
 def main_loop():
-    tg_send("✅ بوت الزخم شغال (Massive/Polygon)")
+    tg_send("✅ بوت القناة الخاصة شغال (3m مقاومة + Upper VWAP)")
     logging.info("MASSIVE_API_KEY len=%d", len(MASSIVE_API_KEY))
 
     while True:
         try:
+            # منع الويكند
+            if BLOCK_WEEKEND and is_weekend_riyadh():
+                logging.info("Weekend blocked. Sleeping...")
+                time.sleep(POLL_SECONDS)
+                continue
+
             # نافذة التشغيل
             if not in_run_window():
                 logging.info("Outside run window (12:00-24:00 Riyadh). Sleeping...")
                 time.sleep(POLL_SECONDS)
                 continue
 
+            # متابعة الهدف الأول
+            check_target1_hits()
+
             sent = get_today_count()
             logging.info("Heartbeat... daily_sent=%s", sent)
-
-            # تنبيهات الهدف الأول (خفيفة)
-            check_target1_hits()
 
             if sent >= MAX_SIGNALS_PER_DAY:
                 time.sleep(POLL_SECONDS)
@@ -310,7 +352,7 @@ def main_loop():
                 time.sleep(POLL_SECONDS)
                 continue
 
-            gainers = get_top_gainers(limit=30)
+            gainers = get_top_gainers(limit=35)
 
             for t in gainers:
                 if get_today_count() >= MAX_SIGNALS_PER_DAY:
@@ -322,12 +364,7 @@ def main_loop():
                 if not sym or last_price <= 0:
                     continue
 
-                # منع تكرار نفس السهم في نفس اليوم (فقط بعد إرسال توصية)
-                k = hashlib.sha1(f"{today_key()}|{sym}".encode("utf-8")).hexdigest()
-                if seen_before(k):
-                    continue
-
-                # فلترة أساسية (لا نعلم seen هنا حتى نسمح يتحسن لاحقًا)
+                # فلترة أساسية
                 if not (PRICE_MIN <= last_price <= PRICE_MAX):
                     continue
                 if chg_pct < MIN_DAY_CHANGE_PCT:
@@ -335,25 +372,45 @@ def main_loop():
                 if day_vol < MIN_DAY_VOLUME:
                     continue
 
+                # لا تكرر نفس السهم في نفس اليوم
+                k = hashlib.sha1(f"{today_key()}|{sym}".encode("utf-8")).hexdigest()
+                if seen_before(k):
+                    continue
+
                 aggs = get_aggs(sym)
                 time.sleep(SLEEP_BETWEEN_CALLS)
                 if not aggs:
                     continue
 
+                # مقاومة (3 دقائق)
                 res = nearest_resistance_from_aggs(aggs, last_price)
                 if not res:
                     continue
 
                 entry = r2(res)
 
-                # شرط “مقاومة قريبة” + تجنب الزخم المتأخر
+                # VWAP علوي
+                vwap = calc_vwap(aggs, window=60)
+                if not vwap:
+                    continue
+                upper_vwap = vwap * (1 + UPPER_VWAP_PCT)
+
+                # شروطك:
+                # 1) السعر تحت الدخول (لسه ما تحقق دخول)
+                if last_price >= entry:
+                    continue
+
+                # 2) السعر فوق Upper VWAP (قوة)
+                if last_price <= upper_vwap:
+                    continue
+
+                # 3) الدخول قريب (ما نبي متأخر)
                 dist = (entry - last_price) / last_price
                 if dist > MAX_ENTRY_DISTANCE_PCT:
                     continue
 
                 stop, (t1, t2, t3) = build_levels(entry)
 
-                # رسالة حسب طلبك: بدون زخم/فوليوم، فقط سعره الآن ثم الدخول
                 msg = (
                     f"{sym}\n"
                     f"سعره الآن: {r2(last_price)}\n"
@@ -367,11 +424,11 @@ def main_loop():
 
                 tg_send(msg)
                 save_signal(sym, entry, stop, t1, t2, t3)
-
                 mark_seen(k)
                 inc_today_count()
                 set_last_send_ts(int(time.time()))
                 time.sleep(2)
+                break  # لا نرسل دفعة وحدة
 
         except Exception as e:
             logging.exception(e)
