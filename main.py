@@ -1,5 +1,5 @@
 import os, time, hashlib, sqlite3, logging, re
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import requests
 
@@ -28,44 +28,43 @@ req("MASSIVE_API_KEY", MASSIVE_API_KEY)
 RIYADH_TZ = ZoneInfo("Asia/Riyadh")
 
 # وقت التشغيل (الرياض)
-RUN_START_HOUR = 12   # 12:00
-RUN_END_HOUR   = 24   # 24:00
+RUN_START_HOUR = 12
+RUN_END_HOUR = 24
 
-# منع الويكند (السبت/الأحد)
+# منع الويكند
 BLOCK_WEEKEND = True
 
 # فلترة السعر
 PRICE_MIN = 1.0
 PRICE_MAX = 10.0
 
-# شروط الزخم الأساسية (بدون عرضها بالرسالة)
+# شروط الزخم
 MIN_DAY_CHANGE_PCT = 10.0
 MIN_DAY_VOLUME = 300_000
 
-# إرسال أسرع (عشان ما يتأخر)
-POLL_SECONDS = 20
+# سرعة الفحص
+POLL_SECONDS = 15
 
-# لا يرسل دفعة وحدة: فاصل بسيط بين التوصيات
-MIN_MINUTES_BETWEEN_SIGNALS = 5
+# فاصل بين التوصيات حتى ما ينزل دفعة واحدة
+MIN_MINUTES_BETWEEN_SIGNALS = 2
 
 # المقاومة على 3 دقائق
 CANDLE_RES_MIN = 3
-LOOKBACK_BARS = 220  # 220×3د ≈ 11 ساعة (كفاية لقراءة مقاومات قريبة)
+LOOKBACK_BARS = 220
 
-# إدارة الصفقة (حسب طلبك)
+# إدارة الصفقة
 STOP_PCT = 0.08
-TARGET_PCTS = [0.07, 0.15, 0.25]  # 1/2/3
+TARGET_PCTS = [0.07, 0.15, 0.25]
 
-# Upper VWAP (العلوي)
-UPPER_VWAP_PCT = 0.005  # 0.5% فوق VWAP (تقدر تخليه 0.01 = 1%)
+# Upper VWAP
+UPPER_VWAP_PCT = 0.005  # 0.5%
 
-# الدخول لازم يكون قريب (حتى ما يجيك متأخر)
+# لازم الدخول قريب
 MAX_ENTRY_DISTANCE_PCT = 0.02  # 2%
 
 MAX_SIGNALS_PER_DAY = 4
 SLEEP_BETWEEN_CALLS = 0.25
 
-# تنبيه الهدف الأول؟
 ALERT_ON_TARGET1 = True
 
 API_BASE = "https://api.massive.com"
@@ -102,12 +101,11 @@ def today_key() -> str:
     return now_riyadh().date().isoformat()
 
 def is_weekend_riyadh() -> bool:
-    # weekday: Mon=0 ... Sat=5 Sun=6
-    return now_riyadh().weekday() >= 5
+    return now_riyadh().weekday() >= 5  # Sat/Sun
 
 def in_run_window() -> bool:
     h = now_riyadh().hour
-    return (h >= RUN_START_HOUR) and (h < RUN_END_HOUR)
+    return RUN_START_HOUR <= h < RUN_END_HOUR
 
 def get_today_count() -> int:
     d = today_key()
@@ -179,7 +177,7 @@ def massive_get(path: str, params: dict | None = None):
     r.raise_for_status()
     return r.json()
 
-def get_top_gainers(limit: int = 35) -> list[dict]:
+def get_top_gainers(limit: int = 50) -> list[dict]:
     data = massive_get("/v2/snapshot/locale/us/markets/stocks/gainers", {})
     tickers = data.get("tickers") or []
     return tickers[:limit]
@@ -196,13 +194,38 @@ def get_aggs(symbol: str):
     return results if results else None
 
 def get_snapshot_ticker(symbol: str) -> dict | None:
-    # لمتابعة الهدف الأول
     path = f"/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}"
     try:
         return massive_get(path, {})
     except Exception as e:
         logging.warning("snapshot ticker failed %s: %s", symbol, e)
         return None
+
+def extract_live_price(snapshot: dict | None, fallback_price: float = 0.0) -> float:
+    """
+    نحاول نأخذ أقرب سعر لحظي من snapshot:
+    min.c ثم day.c ثم fallback
+    """
+    if not snapshot:
+        return float(fallback_price or 0.0)
+
+    ticker = snapshot.get("ticker") or {}
+
+    m = ticker.get("min") or {}
+    if m.get("c"):
+        try:
+            return float(m.get("c"))
+        except Exception:
+            pass
+
+    day = ticker.get("day") or {}
+    if day.get("c"):
+        try:
+            return float(day.get("c"))
+        except Exception:
+            pass
+
+    return float(fallback_price or 0.0)
 
 def snapshot_fields(t: dict):
     sym = (t.get("ticker") or "").strip().upper()
@@ -304,14 +327,13 @@ def check_target1_hits():
         time.sleep(SLEEP_BETWEEN_CALLS)
         if not snap:
             continue
-        ticker = snap.get("ticker") or {}
-        day = (ticker.get("day") or {})
-        last_price = float(day.get("c") or 0)
-        if last_price and float(last_price) >= float(t1):
+
+        live_price = extract_live_price(snap, fallback_price=0.0)
+        if live_price and float(live_price) >= float(t1):
             msg = (
                 f"{sym}\n"
                 f"✅ حقق الهدف الأول\n"
-                f"سعره الآن: {r2(last_price)}\n"
+                f"سعره الآن: {r2(live_price)}\n"
                 f"الدخول: {r2(entry)}"
             )
             tg_send(msg, chat_id=(TG_ALERT_CHAT_ID or TG_CHAT_ID))
@@ -321,24 +343,21 @@ def check_target1_hits():
 # Main
 # =========================
 def main_loop():
-    tg_send("✅ بوت القناة الخاصة شغال (3m مقاومة + Upper VWAP)")
+    tg_send("✅ بوت القناة الخاصة شغال")
     logging.info("MASSIVE_API_KEY len=%d", len(MASSIVE_API_KEY))
 
     while True:
         try:
-            # منع الويكند
             if BLOCK_WEEKEND and is_weekend_riyadh():
                 logging.info("Weekend blocked. Sleeping...")
                 time.sleep(POLL_SECONDS)
                 continue
 
-            # نافذة التشغيل
             if not in_run_window():
                 logging.info("Outside run window (12:00-24:00 Riyadh). Sleeping...")
                 time.sleep(POLL_SECONDS)
                 continue
 
-            # متابعة الهدف الأول
             check_target1_hits()
 
             sent = get_today_count()
@@ -352,7 +371,7 @@ def main_loop():
                 time.sleep(POLL_SECONDS)
                 continue
 
-            gainers = get_top_gainers(limit=35)
+            gainers = get_top_gainers(limit=50)
 
             for t in gainers:
                 if get_today_count() >= MAX_SIGNALS_PER_DAY:
@@ -382,44 +401,74 @@ def main_loop():
                 if not aggs:
                     continue
 
-                # مقاومة (3 دقائق)
+                # استخدم آخر إغلاق من شموع 3 دقائق كسعر مرجعي أسرع من سعر snapshot القديم
+                try:
+                    aggs_last_price = float(aggs[-1].get("c") or last_price)
+                    if aggs_last_price > 0:
+                        last_price = aggs_last_price
+                except Exception:
+                    pass
+
                 res = nearest_resistance_from_aggs(aggs, last_price)
                 if not res:
                     continue
 
                 entry = r2(res)
 
-                # VWAP علوي
                 vwap = calc_vwap(aggs, window=60)
                 if not vwap:
                     continue
                 upper_vwap = vwap * (1 + UPPER_VWAP_PCT)
 
-                # شروطك:
-                # 1) السعر تحت الدخول (لسه ما تحقق دخول)
+                # شرط مبدئي: السعر تحت الدخول
                 if last_price >= entry:
                     continue
 
-                # 2) السعر فوق Upper VWAP (قوة)
+                # شرط مبدئي: السعر فوق Upper VWAP
                 if last_price <= upper_vwap:
                     continue
 
-                # 3) الدخول قريب (ما نبي متأخر)
+                # شرط القرب
                 dist = (entry - last_price) / last_price
                 if dist > MAX_ENTRY_DISTANCE_PCT:
                     continue
 
                 stop, (t1, t2, t3) = build_levels(entry)
 
+                # ===== إعادة تحقق لحظي قبل الإرسال =====
+                fresh_snap = get_snapshot_ticker(sym)
+                time.sleep(SLEEP_BETWEEN_CALLS)
+                live_price = extract_live_price(fresh_snap, fallback_price=last_price)
+
+                if live_price <= 0:
+                    continue
+
+                # لا ترسل إذا السعر الحالي بالفعل فوق الدخول
+                if live_price >= entry:
+                    continue
+
+                # لا ترسل إذا حقق الهدف الأول بالفعل
+                if live_price >= t1:
+                    continue
+
+                # أعد شرط Upper VWAP على السعر اللحظي
+                if live_price <= upper_vwap:
+                    continue
+
+                # أعد شرط القرب على السعر اللحظي
+                live_dist = (entry - live_price) / live_price
+                if live_dist > MAX_ENTRY_DISTANCE_PCT:
+                    continue
+
                 msg = (
                     f"{sym}\n"
-                    f"سعره الآن: {r2(last_price)}\n"
+                    f"سعره الآن: {r2(live_price)}\n"
                     f"الدخول: {entry}\n"
                     f"الوقف: {stop}\n"
                     f"الأهداف:\n"
-                    f"1 {t1}\n"
-                    f"2 {t2}\n"
-                    f"3 {t3}"
+                    f"{t1}\n"
+                    f"{t2}\n"
+                    f"{t3}"
                 )
 
                 tg_send(msg)
@@ -428,7 +477,7 @@ def main_loop():
                 inc_today_count()
                 set_last_send_ts(int(time.time()))
                 time.sleep(2)
-                break  # لا نرسل دفعة وحدة
+                break
 
         except Exception as e:
             logging.exception(e)
