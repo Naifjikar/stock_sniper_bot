@@ -27,8 +27,8 @@ req("MASSIVE_API_KEY", MASSIVE_API_KEY)
 # =========================
 RIYADH_TZ = ZoneInfo("Asia/Riyadh")
 
-# وقت التشغيل (الرياض)
-RUN_START_HOUR = 12
+# وقت التشغيل (الرياض) - يشمل البري ماركت
+RUN_START_HOUR = 11
 RUN_END_HOUR = 24
 
 # منع الويكند
@@ -204,7 +204,7 @@ def get_snapshot_ticker(symbol: str) -> dict | None:
 def extract_live_price(snapshot: dict | None, fallback_price: float = 0.0) -> float:
     """
     نحاول نأخذ أقرب سعر لحظي من snapshot:
-    min.c ثم day.c ثم fallback
+    min.c فقط، وإذا ما توفر نرجع إلى fallback
     """
     if not snapshot:
         return float(fallback_price or 0.0)
@@ -215,13 +215,6 @@ def extract_live_price(snapshot: dict | None, fallback_price: float = 0.0) -> fl
     if m.get("c"):
         try:
             return float(m.get("c"))
-        except Exception:
-            pass
-
-    day = ticker.get("day") or {}
-    if day.get("c"):
-        try:
-            return float(day.get("c"))
         except Exception:
             pass
 
@@ -354,7 +347,7 @@ def main_loop():
                 continue
 
             if not in_run_window():
-                logging.info("Outside run window (12:00-24:00 Riyadh). Sleeping...")
+                logging.info("Outside run window (11:00-24:00 Riyadh). Sleeping...")
                 time.sleep(POLL_SECONDS)
                 continue
 
@@ -401,13 +394,13 @@ def main_loop():
                 if not aggs:
                     continue
 
-                # استخدم آخر إغلاق من شموع 3 دقائق كسعر مرجعي أسرع من سعر snapshot القديم
+                # استخدم آخر إغلاق من شموع 3 دقائق كسعر مرجعي أسرع
                 try:
                     aggs_last_price = float(aggs[-1].get("c") or last_price)
                     if aggs_last_price > 0:
                         last_price = aggs_last_price
                 except Exception:
-                    pass
+                    aggs_last_price = last_price
 
                 res = nearest_resistance_from_aggs(aggs, last_price)
                 if not res:
@@ -438,7 +431,7 @@ def main_loop():
                 # ===== إعادة تحقق لحظي قبل الإرسال =====
                 fresh_snap = get_snapshot_ticker(sym)
                 time.sleep(SLEEP_BETWEEN_CALLS)
-                live_price = extract_live_price(fresh_snap, fallback_price=last_price)
+                live_price = extract_live_price(fresh_snap, fallback_price=aggs_last_price)
 
                 if live_price <= 0:
                     continue
