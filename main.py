@@ -40,13 +40,13 @@ PRICE_MAX = 10.0
 
 # شروط الزخم
 MIN_DAY_CHANGE_PCT = 10.0
-MIN_DAY_VOLUME = 300_000
+MIN_DAY_VOLUME = 100_000   # أخف للبري ماركت
 
 # سرعة الفحص
-POLL_SECONDS = 15
+POLL_SECONDS = 8
 
 # فاصل بين التوصيات حتى ما ينزل دفعة واحدة
-MIN_MINUTES_BETWEEN_SIGNALS = 2
+MIN_MINUTES_BETWEEN_SIGNALS = 1
 
 # المقاومة على 3 دقائق
 CANDLE_RES_MIN = 3
@@ -177,7 +177,7 @@ def massive_get(path: str, params: dict | None = None):
     r.raise_for_status()
     return r.json()
 
-def get_top_gainers(limit: int = 50) -> list[dict]:
+def get_top_gainers(limit: int = 60) -> list[dict]:
     data = massive_get("/v2/snapshot/locale/us/markets/stocks/gainers", {})
     tickers = data.get("tickers") or []
     return tickers[:limit]
@@ -210,8 +210,8 @@ def extract_live_price(snapshot: dict | None, fallback_price: float = 0.0) -> fl
         return float(fallback_price or 0.0)
 
     ticker = snapshot.get("ticker") or {}
-
     m = ticker.get("min") or {}
+
     if m.get("c"):
         try:
             return float(m.get("c"))
@@ -326,7 +326,6 @@ def check_target1_hits():
             msg = (
                 f"{sym}\n"
                 f"✅ حقق الهدف الأول\n"
-                f"سعره الآن: {r2(live_price)}\n"
                 f"الدخول: {r2(entry)}"
             )
             tg_send(msg, chat_id=(TG_ALERT_CHAT_ID or TG_CHAT_ID))
@@ -364,7 +363,7 @@ def main_loop():
                 time.sleep(POLL_SECONDS)
                 continue
 
-            gainers = get_top_gainers(limit=50)
+            gainers = get_top_gainers(limit=60)
 
             for t in gainers:
                 if get_today_count() >= MAX_SIGNALS_PER_DAY:
@@ -394,7 +393,7 @@ def main_loop():
                 if not aggs:
                     continue
 
-                # استخدم آخر إغلاق من شموع 3 دقائق كسعر مرجعي أسرع
+                # استخدم آخر إغلاق من شموع 3 دقائق كسعر مرجعي
                 try:
                     aggs_last_price = float(aggs[-1].get("c") or last_price)
                     if aggs_last_price > 0:
@@ -436,8 +435,8 @@ def main_loop():
                 if live_price <= 0:
                     continue
 
-                # لا ترسل إذا السعر الحالي بالفعل فوق الدخول
-                if live_price >= entry:
+                # لا ترسل إذا السعر قرب جدًا من الدخول أو فات الدخول
+                if live_price >= entry * 0.995:
                     continue
 
                 # لا ترسل إذا حقق الهدف الأول بالفعل
@@ -455,7 +454,6 @@ def main_loop():
 
                 msg = (
                     f"{sym}\n"
-                    f"سعره الآن: {r2(live_price)}\n"
                     f"الدخول: {entry}\n"
                     f"الوقف: {stop}\n"
                     f"الأهداف:\n"
